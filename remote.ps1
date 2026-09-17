@@ -10,6 +10,27 @@ $node=Find-CommandPath 'node.exe'
 if(-not $node){ Write-Host '[BOOT] Node.js not found. Installing Node.js LTS...'; $winget=Find-CommandPath 'winget.exe'; if(-not $winget){throw 'Windows Package Manager (winget) is required for automatic Node.js installation.'}; & $winget install --id OpenJS.NodeJS.LTS --exact --accept-source-agreements --accept-package-agreements; Refresh-Path; $node=Find-CommandPath 'node.exe' }
 if(-not $node){throw 'Node.js LTS installation completed but node.exe was not found.'}
 Write-Host "[BOOT] Node.js ready: $(& $node --version)"
+$python=Find-CommandPath 'python.exe'
+if(-not $python){
+  $python=Join-Path $env:LOCALAPPDATA 'Programs\Python\Python314\python.exe'
+  if(-not (Test-Path $python)){$python=Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\python.exe'}
+}
+if(-not (Test-Path $python)){
+  $version='3.14.7'
+  $installer=Join-Path $env:TEMP "NEXORA-Python-$version-amd64.exe"
+  $url="https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
+  Write-Host '[BOOT] Python not found. Downloading official Python installer...'
+  Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $installer
+  Write-Host '[BOOT] Installing Python for the current Windows user...'
+  $p=Start-Process -FilePath $installer -ArgumentList '/quiet','InstallAllUsers=0','PrependPath=1','Include_pip=1','Include_launcher=1','SimpleInstall=1' -Wait -PassThru
+  Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+  if($p.ExitCode -ne 0){throw "Python installation failed with exit code $($p.ExitCode)."}
+  Refresh-Path
+  $python=Find-CommandPath 'python.exe'
+  if(-not $python){$python=Join-Path $env:LOCALAPPDATA 'Programs\Python\Python314\python.exe'}
+}
+if(-not $python -or -not (Test-Path $python)){throw 'Python installation completed but python.exe was not found.'}
+Write-Host "[BOOT] Python runtime ready: $(& $python --version)"
 $work=Join-Path $env:TEMP ("NEXORA-Hands-" + [guid]::NewGuid().ToString('N'))
 $zip=Join-Path $env:TEMP ("NEXORA-Hands-" + [guid]::NewGuid().ToString('N') + '.zip')
 try {
