@@ -43,15 +43,37 @@ try {
     }
     if (-not $python -or -not (Test-Path $python)) { throw 'Python unavailable' }
 
+    # The downloaded repository is only an update source. Runtime data lives
+    # under LOCALAPPDATA so worker_id/worker_token survive future launches.
+    $runtimeRoot = Join-Path $env:LOCALAPPDATA 'NEXORA\Hands'
     $work = Join-Path $env:TEMP ("NEXORA-Hands-" + [guid]::NewGuid().ToString('N'))
     $zip = Join-Path $env:TEMP ("NEXORA-Hands-" + [guid]::NewGuid().ToString('N') + '.zip')
     try {
+        New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $runtimeRoot 'app') | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $runtimeRoot 'data') | Out-Null
         New-Item -ItemType Directory -Force -Path $work | Out-Null
+
         Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/nexora-kz/NEXORA-Hands/archive/refs/heads/main.zip' -OutFile $zip | Out-Null
         Expand-Archive -LiteralPath $zip -DestinationPath $work -Force
-        $root = Join-Path $work 'NEXORA-Hands-main'
-        if (-not (Test-Path (Join-Path $root 'package.json'))) { throw 'Hands package incomplete' }
-        & (Join-Path $root 'start.ps1')
+        $sourceRoot = Join-Path $work 'NEXORA-Hands-main'
+        if (-not (Test-Path (Join-Path $sourceRoot 'start.ps1'))) { throw 'Hands package incomplete' }
+
+        Copy-Item (Join-Path $sourceRoot 'start.ps1') (Join-Path $runtimeRoot 'start.ps1') -Force
+        if (Test-Path (Join-Path $sourceRoot 'stop.ps1')) {
+            Copy-Item (Join-Path $sourceRoot 'stop.ps1') (Join-Path $runtimeRoot 'stop.ps1') -Force
+        }
+        if (Test-Path (Join-Path $sourceRoot 'app\hands.py')) {
+            Copy-Item (Join-Path $sourceRoot 'app\hands.py') (Join-Path $runtimeRoot 'app\hands.py') -Force
+        }
+        if (Test-Path (Join-Path $sourceRoot 'app\supabase_channel.py')) {
+            Copy-Item (Join-Path $sourceRoot 'app\supabase_channel.py') (Join-Path $runtimeRoot 'app\supabase_channel.py') -Force
+        }
+        if (Test-Path (Join-Path $sourceRoot 'app\hands_supabase_config.json')) {
+            Copy-Item (Join-Path $sourceRoot 'app\hands_supabase_config.json') (Join-Path $runtimeRoot 'app\hands_supabase_config.json') -Force
+        }
+
+        & (Join-Path $runtimeRoot 'start.ps1')
         exit $LASTEXITCODE
     } finally {
         Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
