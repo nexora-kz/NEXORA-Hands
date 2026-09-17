@@ -50,6 +50,16 @@ def request(method, path, body=None, include_worker_token=True):
         raw = r.read().decode()
         return json.loads(raw) if raw else None
 
+def heartbeat(c, worker):
+    rows = request("POST", "/rpc/hands_worker_heartbeat", {
+        "p_worker_id": worker,
+        "p_channel_token": token(c),
+    })
+    if rows is True: return True
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        return bool(next(iter(rows[0].values())))
+    return bool(rows)
+
 def save_state(**kw):
     state = {}
     if STATE.exists():
@@ -126,9 +136,16 @@ def main():
     worker = str(c.get("worker_id") or "")
     if not worker: raise RuntimeError("worker_id is empty after registration")
     poll = float(c.get("poll_seconds") or 1.0)
+    heartbeat_seconds = max(5.0, float(c.get("heartbeat_seconds") or 15))
+    next_heartbeat = 0.0
     save_state(status="starting", worker_id=worker)
     while True:
         try:
+            now = time.monotonic()
+            if now >= next_heartbeat:
+                ok = heartbeat(c, worker)
+                save_state(status="heartbeat" if ok else "heartbeat_failed", worker_id=worker, heartbeat_ok=ok, heartbeat_at=time.time())
+                next_heartbeat = now + heartbeat_seconds
             recovered, guarded = recover_stale(c, worker)
             if recovered or guarded: save_state(status="recovery_scan", worker_id=worker, recovered=recovered, guarded=guarded)
             cmd = claim(c, worker)
@@ -159,6 +176,11 @@ def main():
                         qh = urllib.parse.urlencode({"id": "eq." + str(cmd["id"]), "status": "eq.claimed", "worker_id": "eq." + worker, "lease_token": "eq." + str(cmd.get("lease_token") or "")})
                         request("PATCH", "/hands_commands?" + qh, {"claimed_at": datetime.now(timezone.utc).isoformat()})
                         heartbeat_at = now + max(5.0, min(30.0, float(c.get("heartbeat_seconds") or 15)))
+                    now = time.monotonic()
+                    if now >= next_heartbeat:
+                        ok = heartbeat(c, worker)
+                        save_state(heartbeat_ok=ok, heartbeat_at=time.time())
+                        next_heartbeat = now + heartbeat_seconds
                     time.sleep(0.5)
                 else:
                     submit_result(c, worker, task_id, {"task_id": task_id, "status": "timeout_waiting_result"}, cmd.get("lease_token"), "local result timeout")
