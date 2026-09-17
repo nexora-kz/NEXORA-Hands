@@ -112,22 +112,21 @@ Write-Host '[READY] This window is the live local runtime console.' -ForegroundC
 Write-Host '[READY] Press Ctrl+C to close this monitor; use stop.ps1 to stop the agent.' -ForegroundColor DarkGray
 Write-Host ''
 $lastHandsStatus = ''
-$lastChannelStatus = ''
 $lastTask = ''
 $seen = @{}
 while ($true) {
     try {
         $statePath = Join-Path $Data 'state.json'
-        $channelStatePath = Join-Path $Data 'supabase_channel_state.json'
         if (Test-Path $statePath) {
             $s = Get-Content $statePath -Raw | ConvertFrom-Json
             $line = "[HANDS] $($s.status) PID=$($s.pid)"
             if ($s.status -ne $lastHandsStatus -or $s.task_id -ne $lastTask) { Write-Host $line -ForegroundColor DarkCyan; $lastHandsStatus=$s.status; $lastTask=$s.task_id }
         }
+        # Supabase transport heartbeat/idle status is intentionally hidden from the
+        # visible console. Transport diagnostics remain available in log files.
+        $channelStatePath = Join-Path $Data 'supabase_channel_state.json'
         if (Test-Path $channelStatePath) {
             $c = Get-Content $channelStatePath -Raw | ConvertFrom-Json
-            $line = "[CHANNEL] $($c.status) worker=$($c.worker_id)"
-            if ($c.status -ne $lastChannelStatus) { Write-Host $line -ForegroundColor DarkMagenta; $lastChannelStatus=$c.status }
             if ($c.error) { Write-Host "[CHANNEL][ERROR] $($c.error)" -ForegroundColor Red }
         }
         Get-ChildItem (Join-Path $Data 'outbox\*.json') -ErrorAction SilentlyContinue |
