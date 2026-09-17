@@ -17,13 +17,24 @@ def state(status,task_id="",error=""):
 OP_RU={"shell":"PowerShell","read_file":"\u0427\u0442\u0435\u043d\u0438\u0435 \u0444\u0430\u0439\u043b\u0430","write_file":"\u0417\u0430\u043f\u0438\u0441\u044c \u0444\u0430\u0439\u043b\u0430","list_directory":"\u041f\u0440\u043e\u0441\u043c\u043e\u0442\u0440 \u043f\u0430\u043f\u043a\u0438","copy":"\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435","move":"\u041f\u0435\u0440\u0435\u043c\u0435\u0449\u0435\u043d\u0438\u0435","delete":"\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435","process_list":"\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u043e\u0432","process_start":"\u0417\u0430\u043f\u0443\u0441\u043a \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430","process_wait":"\u041e\u0436\u0438\u0434\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430","system_info":"\u0418\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u044f \u043e \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0435","system_resources":"\u0420\u0435\u0441\u0443\u0440\u0441\u044b \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0430","start_search":"\u041f\u043e\u0438\u0441\u043a \u0444\u0430\u0439\u043b\u043e\u0432"}
 def console(text):
     print(text, flush=True)
+def safe_command_preview(value):
+    import re
+    text=str(value or "")
+    patterns=[
+        r'(?i)(password|passwd|pwd|token|secret|api[_-]?key|authorization)(\s*[:=]\s*)([^\s;]+)',
+        r'(?i)(-password|-token|-secret|-api[_-]?key)(\s+)([^\s;]+)',
+        r'(?i)(bearer\s+)([A-Za-z0-9._~+/-]+=*)',
+    ]
+    for pattern in patterns:
+        text=re.sub(pattern,lambda m: m.group(1)+m.group(2)+"[REDACTED]",text)
+    return text if len(text)<=500 else text[:500]+"... [TRUNCATED]"
 def execute(c):
     op=str(c.get("operation") or c.get("type") or "").strip().lower()
     if op=="shell":
         cmd=str(c.get("command") or "")
         if not cmd: raise ValueError("shell command is empty")
         import base64
-        wrapped="$ErrorActionPreference='Continue'; & {"+cmd+"} 2>&1 | Out-String | ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_)) }"
+        wrapped="$ErrorActionPreference='Continue'; $ProgressPreference='SilentlyContinue'; & {"+cmd+"} 2>&1 | Out-String | ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_)) }"
         encoded=base64.b64encode(wrapped.encode("utf-16le")).decode("ascii")
         r=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded],capture_output=True,text=True,encoding="ascii",errors="replace",timeout=int(c.get("timeout_seconds") or 300))
         raw=(r.stdout or "").strip(); out=""
@@ -249,7 +260,7 @@ def main():
                 c=json.loads(running.read_text(encoding="utf-8-sig")); task=str(c.get("task_id") or uuid.uuid4()); state("executing",task)
                 op=str(c.get("operation") or c.get("type") or "").strip().lower(); title=OP_RU.get(op,op or "\u0417\u0430\u0434\u0430\u0447\u0430")
                 console(f"\n[\u0417\u0410\u0414\u0410\u0427\u0410] {title}")
-                if op=="shell": console("[\u041a\u041e\u041c\u0410\u041d\u0414\u0410] "+str(c.get("command") or ""))
+                if op=="shell": console("[\u041a\u041e\u041c\u0410\u041d\u0414\u0410] "+safe_command_preview(c.get("command")))
                 console("[\u0412\u042b\u041f\u041e\u041b\u041d\u042f\u0415\u0422\u0421\u042f]")
                 try:
                     result={"task_id":task,"status":"completed","payload":execute(c)}; console("[\u0413\u041e\u0422\u041e\u0412\u041e] \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u0443\u0441\u043f\u0435\u0448\u043d\u043e")
