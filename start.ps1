@@ -14,22 +14,8 @@ try {
     if ($null -eq $cfg.worker_token) { $cfg | Add-Member worker_token '' -Force }
     $cfg | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $RuntimeConfig -Encoding UTF8
 } catch { exit 1 }
-$RepoBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/main/app'
-$files = @(
-    @{Name='hands.py'; Path=(Join-Path $App 'hands.py')},
-    @{Name='supabase_channel.py'; Path=(Join-Path $App 'supabase_channel.py')}
-)
-foreach ($f in $files) {
-    $tmp = "$($f.Path).download"
-    try {
-        Invoke-WebRequest -Uri "$RepoBase/$($f.Name)" -OutFile $tmp -UseBasicParsing
-        if ((Get-Item -LiteralPath $tmp).Length -lt 1000) { throw 'download failed' }
-        Move-Item -LiteralPath $tmp -Destination $f.Path -Force
-    } catch {
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-        if (-not (Test-Path -LiteralPath $f.Path)) { exit 1 }
-    }
-}
+if (-not (Test-Path -LiteralPath (Join-Path $App 'hands.py'))) { exit 1 }
+if (-not (Test-Path -LiteralPath (Join-Path $App 'supabase_channel.py'))) { exit 1 }
 if (-not $PythonPath) {
     $PythonPath = (Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
     if (-not $PythonPath) { $PythonPath = 'C:\Python314\python.exe' }
