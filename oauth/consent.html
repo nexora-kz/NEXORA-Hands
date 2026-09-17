@@ -41,55 +41,83 @@
     const login = document.getElementById('login')
     const consent = document.getElementById('consent')
 
+    function showError(message) {
+      status.textContent = message
+      status.className = 'error'
+    }
+
     async function init() {
-      if (!authorizationId) {
-        status.textContent = 'Нет authorization_id.'
-        status.className = 'error'
-        return
+      try {
+        if (!authorizationId) {
+          showError('Нет authorization_id.')
+          return
+        }
+
+        // Supabase's OAuth consent flow requires the user to be authenticated
+        // before retrieving the authorization details.
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+        if (sessionError) {
+          showError('Не удалось проверить вход Supabase: ' + sessionError.message)
+          return
+        }
+
+        if (!sessionData.session) {
+          status.textContent = 'Требуется вход в Supabase.'
+          login.hidden = false
+          return
+        }
+
+        status.textContent = 'Получение данных OAuth-запроса…'
+        const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId)
+        if (error) {
+          showError('Не удалось получить данные OAuth-запроса: ' + error.message)
+          return
+        }
+        if (!data) {
+          showError('Supabase не вернул данные OAuth-запроса.')
+          return
+        }
+
+        details.innerHTML = '<p><b>Приложение:</b> ' + escapeHtml(data.client?.name || 'MCP-клиент') + '</p>' +
+          '<p><b>Разрешения:</b> ' + escapeHtml(data.scope || 'не указаны') + '</p>'
+
+        status.textContent = 'Проверьте запрашиваемый доступ и подтвердите его.'
+        consent.hidden = false
+      } catch (e) {
+        showError('Ошибка страницы OAuth: ' + (e?.message || String(e)))
       }
-
-      const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId)
-      if (error) {
-        status.textContent = 'Не удалось получить данные OAuth-запроса: ' + error.message
-        status.className = 'error'
-        return
-      }
-
-      details.innerHTML = '<p><b>Приложение:</b> ' + escapeHtml(data.client?.name || 'MCP-клиент') + '</p>' +
-        '<p><b>Разрешения:</b> ' + escapeHtml(data.scope || 'не указаны') + '</p>'
-
-      const { data: sessionData } = await supabase.auth.getSession()
-      if (!sessionData.session) {
-        status.textContent = 'Требуется вход.'
-        login.hidden = false
-        return
-      }
-
-      status.textContent = 'Проверьте запрашиваемый доступ и подтвердите его.'
-      consent.hidden = false
     }
 
     document.getElementById('send').onclick = async () => {
-      const email = document.getElementById('email').value.trim()
-      if (!email) return
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: location.href }
-      })
-      document.getElementById('loginStatus').textContent = error ? error.message : 'Ссылка входа отправлена на email.'
-      document.getElementById('loginStatus').className = error ? 'error' : 'ok'
+      try {
+        const email = document.getElementById('email').value.trim()
+        if (!email) return
+        const { error } = await supabase.auth.signInWithOtp({
+          email,
+          options: { emailRedirectTo: location.href }
+        })
+        document.getElementById('loginStatus').textContent = error ? error.message : 'Ссылка входа отправлена на email.'
+        document.getElementById('loginStatus').className = error ? 'error' : 'ok'
+      } catch (e) {
+        document.getElementById('loginStatus').textContent = e?.message || String(e)
+        document.getElementById('loginStatus').className = 'error'
+      }
     }
 
     document.getElementById('approve').onclick = async () => {
-      const { data, error } = await supabase.auth.oauth.approveAuthorization(authorizationId)
-      if (error) { status.textContent = error.message; status.className = 'error'; return }
-      location.href = data.redirect_url
+      try {
+        const { data, error } = await supabase.auth.oauth.approveAuthorization(authorizationId)
+        if (error) { showError(error.message); return }
+        location.href = data.redirect_url
+      } catch (e) { showError(e?.message || String(e)) }
     }
 
     document.getElementById('deny').onclick = async () => {
-      const { data, error } = await supabase.auth.oauth.denyAuthorization(authorizationId)
-      if (error) { status.textContent = error.message; status.className = 'error'; return }
-      location.href = data.redirect_url
+      try {
+        const { data, error } = await supabase.auth.oauth.denyAuthorization(authorizationId)
+        if (error) { showError(error.message); return }
+        location.href = data.redirect_url
+      } catch (e) { showError(e?.message || String(e)) }
     }
 
     function escapeHtml(value) {
