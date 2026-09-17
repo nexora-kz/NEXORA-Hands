@@ -59,15 +59,21 @@ try {
         try {
             Invoke-WebRequest -UseBasicParsing -Uri $file.Url -OutFile $tmp
             if ((Get-Item -LiteralPath $tmp).Length -lt 100) { throw 'download too small' }
+            if (Test-Path -LiteralPath $file.Path) { Remove-Item -LiteralPath $file.Path -Force }
             Move-Item -LiteralPath $tmp -Destination $file.Path -Force
         } finally {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         }
     }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $runtimeRoot 'start.ps1') -PythonPath $python
+    $startPath = Join-Path $runtimeRoot 'start.ps1'
+    $startText = [System.IO.File]::ReadAllText($startPath)
+    if ($startText -notmatch 'NEXORA Hands') { throw 'start.ps1 validation failed' }
+    if ($startText -match 'вЂ|РїРѕ') { throw 'start.ps1 encoding validation failed' }
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $startPath -PythonPath $python
     exit $LASTEXITCODE
 } catch {
-    Write-Host 'NEXORA Hands — не удалось установить подключение.' -ForegroundColor Red
+    Write-Host ('NEXORA Hands ' + [char]0x2014 + ' ' + [string]::Concat([char[]](0x043D,0x0435)) + ' ' + [string]::Concat([char[]](0x0443,0x0434,0x0430,0x043B,0x043E,0x0441,0x044C)) + ' ' + [string]::Concat([char[]](0x0443,0x0441,0x0442,0x0430,0x043D,0x043E,0x0432,0x0438,0x0442,0x044C)) + ' ' + [string]::Concat([char[]](0x043F,0x043E,0x0434,0x043A,0x043B,0x044E,0x0447,0x0435,0x043D,0x0438,0x0435)) + '.') -ForegroundColor Red
     exit 1
 }
