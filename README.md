@@ -2,19 +2,21 @@
 
 Standalone Windows execution layer for NEXORA.
 
-Target flow:
+## Working flow
 
-ChatGPT → NEXORA transport → NEXORA Hands → Windows PC
+**Launch page → NEXORA-Hands.cmd → automatic runtime setup → NEXORA Hands → ChatGPT/NEXORA transport → Windows PC**
 
-## Remote bootstrap
+The end-user does not need Git or Remote Desktop Commander.
 
-The repository contains the Windows bootstrap used to prepare the local runtime.
+### On a new Windows PC
 
-The final public one-click flow will be:
+1. Open the public launch page.
+2. Download `NEXORA-Hands.cmd`.
+3. Run the downloaded file.
+4. The visible PowerShell console installs missing runtime components automatically.
+5. NEXORA Hands starts and registers this PC as a worker through the NEXORA transport.
+6. The same PowerShell window remains the live local runtime console.
 
-1. Open bootstrap link.
-2. Node.js LTS is installed if needed.
-3. NEXORA Hands runtime is obtained.
-4. PowerShell remains open as the live local runtime console.
+Node.js LTS and Python are installed automatically when they are missing. Git is not required.
 
-The Supabase runtime configuration is intentionally not published in this repository.
+The worker receives commands through the NEXORA transport and executes them locally on Windows.
