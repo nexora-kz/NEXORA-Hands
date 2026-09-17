@@ -32,3 +32,14 @@ The Control Center uses the existing Supabase-backed Hands control layer. It doe
 **Control Center → Hands control API → Supabase Hands control layer → Hands worker → Windows PC**
 
 The worker and launcher are standalone components and do not depend on OpenAI services.
+## Friendly worker names
+
+hands_list_workers returns a permanent friendly name for every PC.
+
+Known aliases:
+- NEXORA-LAPTOP -> LAPTOP-PJ1VRBPC
+- NEXORA-DESKTOP -> DESKTOP-PQU4USG
+
+Every other worker automatically receives a stable fallback name in the form NEXORA-PC-XXXXXXXX, derived from its persistent worker ID.
+
+hands_execute.worker_id accepts either the real worker ID or any returned friendly name/alias. This lets a chat say, for example, work only on NEXORA-LAPTOP without copying the UUID.
