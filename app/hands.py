@@ -21,9 +21,15 @@ def execute(c):
     if op=="shell":
         cmd=str(c.get("command") or "")
         if not cmd: raise ValueError("shell command is empty")
-        ps_utf8="[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);$OutputEncoding=[Console]::OutputEncoding;"
-        r=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",ps_utf8+cmd],capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=int(c.get("timeout_seconds") or 300))
-        return {"returncode":r.returncode,"stdout":r.stdout,"stderr":r.stderr}
+        import base64
+        wrapped="$ErrorActionPreference='Continue'; & {"+cmd+"} 2>&1 | Out-String | ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_)) }"
+        encoded=base64.b64encode(wrapped.encode("utf-16le")).decode("ascii")
+        r=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded],capture_output=True,text=True,encoding="ascii",errors="replace",timeout=int(c.get("timeout_seconds") or 300))
+        raw=(r.stdout or "").strip(); out=""
+        if raw:
+            try: out=base64.b64decode(raw).decode("utf-16le")
+            except Exception: out=raw
+        return {"returncode":r.returncode,"stdout":out,"stderr":r.stderr}
     if op=="read_file":
         p=Path(str(c["path"])).resolve(); return {"path":str(p),"content":p.read_text(encoding="utf-8",errors="replace")}
     if op=="write_file":
