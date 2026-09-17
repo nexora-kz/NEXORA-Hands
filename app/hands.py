@@ -171,7 +171,7 @@ def execute(c):
     if op=="session_start":
         command=c.get("command");
         if not command: raise ValueError("session_start command is empty")
-        args=command if isinstance(command,list) else [str(command)]; sid=str(c.get("session_id") or c.get("task_id") or uuid.uuid4())
+        args=command if isinstance(command,list) else (["powershell.exe","-NoProfile","-NonInteractive","-Command",str(command)] if os.name=="nt" else ["sh","-lc",str(command)]); sid=str(c.get("session_id") or c.get("task_id") or uuid.uuid4())
         stdout_path=PROCESS_DIR/f"{sid}.stdout"; stderr_path=PROCESS_DIR/f"{sid}.stderr"; input_path=PROCESS_DIR/f"{sid}.input"; meta_path=PROCESS_DIR/f"{sid}.json"; runner_path=PROCESS_DIR/f"{sid}.runner.py"
         meta={"pid":"pending","command":args,"stdout":str(stdout_path),"stderr":str(stderr_path),"input":str(input_path),"started_at":time.time(),"session":True}
         meta_path.write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8"); input_path.write_text("",encoding="utf-8")
