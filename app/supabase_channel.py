@@ -14,13 +14,21 @@ INBOX = DATA / "inbox"
 OUTBOX = DATA / "outbox"
 CONFIG = DATA / "hands_supabase_config.json"
 DEFAULT_CONFIG = ROOT / "app" / "hands_supabase_config.json"
+PERSISTENT_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "NEXORA" / "Hands"
+PERSISTENT_CONFIG = PERSISTENT_ROOT / "data" / "hands_supabase_config.json"
 STATE = DATA / "supabase_channel_state.json"
 INBOX.mkdir(parents=True, exist_ok=True)
 OUTBOX.mkdir(parents=True, exist_ok=True)
 
 def cfg():
-    source = CONFIG if CONFIG.exists() else DEFAULT_CONFIG
-    return json.loads(source.read_text(encoding="utf-8-sig"))
+    # Reuse persistent machine identity even when launched from %TEMP%.
+    for source in (CONFIG, PERSISTENT_CONFIG, DEFAULT_CONFIG):
+        if not source.exists(): continue
+        try:
+            value = json.loads(source.read_text(encoding="utf-8-sig"))
+            if value.get("worker_token") or source == DEFAULT_CONFIG: return value
+        except Exception: continue
+    raise RuntimeError("no usable Hands config")
 
 def token(c):
     return hashlib.sha256(str(c["worker_token"]).encode()).hexdigest()
