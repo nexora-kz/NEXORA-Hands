@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NEXORA Hands — разрешение доступа</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:680px;margin:60px auto;padding:0 20px;background:#111;color:#eee}
+    .card{background:#1b1b1b;border:1px solid #333;border-radius:14px;padding:28px}
+    button,input{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #555;background:#222;color:#eee}
+    button{cursor:pointer;margin-right:8px} input{width:100%;box-sizing:border-box;margin:10px 0 14px}
+    .muted{color:#aaa}.error{color:#ff8a8a}.ok{color:#8fe39a}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>NEXORA Hands</h1>
+    <p id="status" class="muted">Проверка запроса OAuth…</p>
+    <div id="details"></div>
+    <div id="login" hidden>
+      <p>Для выдачи доступа требуется войти в Supabase.</p>
+      <input id="email" type="email" autocomplete="email" placeholder="Email">
+      <button id="send">Отправить ссылку входа</button>
+      <p id="loginStatus" class="muted"></p>
+    </div>
+    <div id="consent" hidden>
+      <button id="approve">Разрешить</button>
+      <button id="deny">Отклонить</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = 'https://igeddbknrctsdufieosg.supabase.co'
+    const SUPABASE_KEY = 'sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2'
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+    const params = new URLSearchParams(location.search)
+    const authorizationId = params.get('authorization_id')
+    const status = document.getElementById('status')
+    const details = document.getElementById('details')
+    const login = document.getElementById('login')
+    const consent = document.getElementById('consent')
+
+    async function init() {
+      if (!authorizationId) {
+        status.textContent = 'Нет authorization_id.'
+        status.className = 'error'
+        return
+      }
+
+      const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId)
+      if (error) {
+        status.textContent = 'Не удалось получить данные OAuth-запроса: ' + error.message
+        status.className = 'error'
+        return
+      }
+
+      details.innerHTML = '<p><b>Приложение:</b> ' + escapeHtml(data.client?.name || 'MCP-клиент') + '</p>' +
+        '<p><b>Разрешения:</b> ' + escapeHtml(data.scope || 'не указаны') + '</p>'
+
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) {
+        status.textContent = 'Требуется вход.'
+        login.hidden = false
+        return
+      }
+
+      status.textContent = 'Проверьте запрашиваемый доступ и подтвердите его.'
+      consent.hidden = false
+    }
+
+    document.getElementById('send').onclick = async () => {
+      const email = document.getElementById('email').value.trim()
+      if (!email) return
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: location.href }
+      })
+      document.getElementById('loginStatus').textContent = error ? error.message : 'Ссылка входа отправлена на email.'
+      document.getElementById('loginStatus').className = error ? 'error' : 'ok'
+    }
+
+    document.getElementById('approve').onclick = async () => {
+      const { data, error } = await supabase.auth.oauth.approveAuthorization(authorizationId)
+      if (error) { status.textContent = error.message; status.className = 'error'; return }
+      location.href = data.redirect_url
+    }
+
+    document.getElementById('deny').onclick = async () => {
+      const { data, error } = await supabase.auth.oauth.denyAuthorization(authorizationId)
+      if (error) { status.textContent = error.message; status.className = 'error'; return }
+      location.href = data.redirect_url
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]))
+    }
+
+    init()
+  </script>
+</body>
+</html>
