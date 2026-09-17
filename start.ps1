@@ -1,5 +1,13 @@
 param([string]$PythonPath = '')
 $ErrorActionPreference = 'Stop'
+$Utf8NoBom = [Text.UTF8Encoding]::new($false)
+try { [Console]::InputEncoding = $Utf8NoBom } catch {}
+try { [Console]::OutputEncoding = $Utf8NoBom } catch {}
+$OutputEncoding = $Utf8NoBom
+$PSDefaultParameterValues['*:Encoding'] = 'utf8'
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+try { chcp.com 65001 > $null } catch {}
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Data = Join-Path $Root 'data'
 $App = Join-Path $Root 'app'
@@ -23,9 +31,6 @@ if (-not $PythonPath) {
 if (-not (Test-Path -LiteralPath $PythonPath)) { exit 1 }
 $Hands = [IO.Path]::GetFullPath((Join-Path $App 'hands.py'))
 $Channel = [IO.Path]::GetFullPath((Join-Path $App 'supabase_channel.py'))
-$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-$env:PYTHONUTF8 = '1'
-$env:PYTHONIOENCODING = 'utf-8'
 $HandsOut = Join-Path $Log 'hands.stdout.log'
 $HandsErr = Join-Path $Log 'hands.stderr.log'
 $ChannelOut = Join-Path $Log 'channel.stdout.log'

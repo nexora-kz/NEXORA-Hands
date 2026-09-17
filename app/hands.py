@@ -8,6 +8,30 @@ import sys
 import time
 import uuid
 from pathlib import Path
+
+os.environ.setdefault("PYTHONUTF8","1")
+os.environ.setdefault("PYTHONIOENCODING","utf-8")
+for _stream in (sys.stdout,sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8",errors="replace")
+    except (AttributeError,ValueError):
+        pass
+
+PS_UTF8_BOOTSTRAP=(
+    "$utf8=[Text.UTF8Encoding]::new($false); "
+    "try{[Console]::InputEncoding=$utf8}catch{}; "
+    "try{[Console]::OutputEncoding=$utf8}catch{}; "
+    "$OutputEncoding=$utf8; "
+    "$PSDefaultParameterValues['*:Encoding']='utf8'; "
+    "$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'; "
+    "try{chcp.com 65001 > $null}catch{}; "
+)
+def powershell_args(command):
+    import base64
+    wrapped=PS_UTF8_BOOTSTRAP+str(command)
+    encoded=base64.b64encode(wrapped.encode("utf-16le")).decode("ascii")
+    return ["powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded]
+
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/"data"; PROCESS_DIR=DATA/"processes"; PROCESS_DIR.mkdir(parents=True,exist_ok=True)
 INBOX,OUTBOX=DATA/"inbox",DATA/"outbox"; STATE=DATA/"state.json"
@@ -35,7 +59,7 @@ def execute(c):
         if not cmd: raise ValueError("shell command is empty")
         import base64
         wrapped="$ErrorActionPreference='Continue'; $ProgressPreference='SilentlyContinue'; & {"+cmd+"} 2>&1 | Out-String | ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_)) }"
-        encoded=base64.b64encode(wrapped.encode("utf-16le")).decode("ascii")
+        encoded=base64.b64encode((PS_UTF8_BOOTSTRAP+wrapped).encode("utf-16le")).decode("ascii")
         r=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded],capture_output=True,text=True,encoding="ascii",errors="replace",timeout=int(c.get("timeout_seconds") or 300))
         raw=(r.stdout or "").strip(); out=""
         if raw:
@@ -165,13 +189,13 @@ def execute(c):
     if op=="get_prompts":
         return {"prompts":[{"id":"onb2_01","title":"Organize my Downloads folder"},{"id":"onb2_02","title":"Explain a codebase or repository"},{"id":"onb2_03","title":"Create organized knowledge base"},{"id":"onb2_04","title":"Analyze a data file"},{"id":"onb2_05","title":"Check system health and resources"}]}
     if op=="process_list":
-        r=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command","Get-Process | Select-Object Id,ProcessName,CPU,WorkingSet64 | ConvertTo-Json -Compress"],capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=30)
+        r=subprocess.run(powershell_args("Get-Process | Select-Object Id,ProcessName,CPU,WorkingSet64 | ConvertTo-Json -Compress"),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=30)
         rows=json.loads(r.stdout or "[]"); rows=rows if isinstance(rows,list) else [rows]
         return {"count":len(rows),"items":[{"pid":x.get("Id"),"name":x.get("ProcessName"),"cpu":x.get("CPU"),"memory":x.get("WorkingSet64")} for x in rows]}
     if op=="session_start":
         command=c.get("command");
         if not command: raise ValueError("session_start command is empty")
-        args=command if isinstance(command,list) else (["powershell.exe","-NoProfile","-NonInteractive","-Command",str(command)] if os.name=="nt" else ["sh","-lc",str(command)]); sid=str(c.get("session_id") or c.get("task_id") or uuid.uuid4())
+        args=command if isinstance(command,list) else (powershell_args(str(command)) if os.name=="nt" else ["sh","-lc",str(command)]); sid=str(c.get("session_id") or c.get("task_id") or uuid.uuid4())
         stdout_path=PROCESS_DIR/f"{sid}.stdout"; stderr_path=PROCESS_DIR/f"{sid}.stderr"; input_path=PROCESS_DIR/f"{sid}.input"; meta_path=PROCESS_DIR/f"{sid}.json"; runner_path=PROCESS_DIR/f"{sid}.runner.py"
         meta={"pid":"pending","command":args,"stdout":str(stdout_path),"stderr":str(stderr_path),"input":str(input_path),"started_at":time.time(),"session":True}
         meta_path.write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8"); input_path.write_text("",encoding="utf-8")
@@ -199,13 +223,13 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         sid=str(c["session_id"]); mp=PROCESS_DIR/f"{sid}.json"
         if not mp.exists(): raise FileNotFoundError(str(mp))
         m=json.loads(mp.read_text(encoding="utf-8")); ids=[int(x) for x in (m.get("pid"),m.get("child_pid")) if str(x).isdigit()]
-        for tid in ids: subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",f"Stop-Process -Id {tid} -Force -ErrorAction SilentlyContinue"],capture_output=True,timeout=15)
+        for tid in ids: subprocess.run(powershell_args(f"Stop-Process -Id {tid} -Force -ErrorAction SilentlyContinue"),capture_output=True,timeout=15)
         mp.unlink(missing_ok=True)
         return {"session_id":sid,"stopped":True,"pids":ids}
     if op=="process_start":
         command=c.get("command");
         if not command: raise ValueError("process_start command is empty")
-        args=command if isinstance(command,list) else ["powershell.exe","-NoProfile","-NonInteractive","-Command",str(command)]; tid=str(c.get("task_id") or uuid.uuid4())
+        args=command if isinstance(command,list) else powershell_args(str(command)); tid=str(c.get("task_id") or uuid.uuid4())
         stdout_path=PROCESS_DIR/f"{tid}.stdout"; stderr_path=PROCESS_DIR/f"{tid}.stderr"; input_path=PROCESS_DIR/f"{tid}.input"; meta_path=PROCESS_DIR/f"{tid}.json"; runner_path=PROCESS_DIR/f"{tid}.runner.py"
         runner=f'''import json,subprocess,os,time
 from pathlib import Path
@@ -225,7 +249,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                 if int(x.get("pid"))==pid: meta=x; break
             except Exception: continue
         while time.time()<deadline:
-            ps=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",f"$p=Get-Process -Id {pid} -ErrorAction SilentlyContinue; if($p){{'RUNNING'}}else{{'EXITED'}}"],capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=10)
+            ps=subprocess.run(powershell_args(f"$p=Get-Process -Id {pid} -ErrorAction SilentlyContinue; if($p){{'RUNNING'}}else{{'EXITED'}}"),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=10)
             if ps.stdout.strip()!="RUNNING": break
             time.sleep(.25)
         running=ps.stdout.strip()=="RUNNING"; stdout=""; stderr=""
@@ -240,10 +264,10 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                 if int(x.get("pid"))==pid: target=x; break
             except Exception: continue
         ids=[pid]+([int(target["child_pid"])] if target and target.get("child_pid") else [])
-        for tid in ids: subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",f"Stop-Process -Id {tid} -Force -ErrorAction SilentlyContinue"],capture_output=True,timeout=15)
+        for tid in ids: subprocess.run(powershell_args(f"Stop-Process -Id {tid} -Force -ErrorAction SilentlyContinue"),capture_output=True,timeout=15)
         time.sleep(.2); remaining=[]
         for tid in ids:
-            if subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"],timeout=10).returncode!=0: remaining.append(tid)
+            if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
     if op=="system_info":
         return {"hostname":socket.gethostname(),"platform":platform.platform(),"system":platform.system(),"release":platform.release(),"version":platform.version(),"machine":platform.machine(),"python":platform.python_version(),"processor":platform.processor(),"cpu_count":os.cpu_count()}

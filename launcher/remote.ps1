@@ -1,4 +1,12 @@
 $ErrorActionPreference = 'Stop'
+$Utf8NoBom = [Text.UTF8Encoding]::new($false)
+try { [Console]::InputEncoding = $Utf8NoBom } catch {}
+try { [Console]::OutputEncoding = $Utf8NoBom } catch {}
+$OutputEncoding = $Utf8NoBom
+$PSDefaultParameterValues['*:Encoding'] = 'utf8'
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+try { chcp.com 65001 > $null } catch {}
 $ProgressPreference = 'SilentlyContinue'
 Write-Host '============================================================'
 Write-Host '                 NEXORA HANDS'
