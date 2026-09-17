@@ -13,6 +13,9 @@ INBOX,OUTBOX=DATA/"inbox",DATA/"outbox"; STATE=DATA/"state.json"
 for p in (INBOX,OUTBOX): p.mkdir(parents=True,exist_ok=True)
 def state(status,task_id="",error=""):
     STATE.write_text(json.dumps({"name":"NEXORA Hands","status":status,"pid":os.getpid(),"task_id":task_id,"error":error,"updated_at":time.time()},ensure_ascii=False,indent=2),encoding="utf-8")
+OP_RU={"shell":"PowerShell","read_file":"?????? ?????","write_file":"?????? ?????","list_directory":"???????? ?????","copy":"???????????","move":"???????????","delete":"????????","process_list":"?????? ?????????","process_start":"?????? ????????","process_wait":"???????? ????????","system_info":"?????????? ? ??????????","system_resources":"??????? ??????????","start_search":"????? ??????"}
+def console(text):
+    print(text, flush=True)
 def execute(c):
     op=str(c.get("operation") or c.get("type") or "").strip().lower()
     if op=="shell":
@@ -236,8 +239,16 @@ def main():
             except OSError: continue
             try:
                 c=json.loads(running.read_text(encoding="utf-8-sig")); task=str(c.get("task_id") or uuid.uuid4()); state("executing",task)
-                try: result={"task_id":task,"status":"completed","payload":execute(c)}
-                except Exception as e: result={"task_id":task,"status":"error","error":f"{type(e).__name__}: {e}"}
+                op=str(c.get("operation") or c.get("type") or "").strip().lower(); title=OP_RU.get(op,op or "??????")
+                console(f"\n[??????] {title}")
+                if op=="shell": console("[???????] "+str(c.get("command") or ""))
+                console("[???????????]")
+                try:
+                    result={"task_id":task,"status":"completed","payload":execute(c)}; console("[??????] ????????? ???????")
+                    payload=result.get("payload") or {}; out=payload.get("stdout") if isinstance(payload,dict) else None
+                    if out and str(out).strip(): console("[?????????] "+str(out).strip())
+                except Exception as e:
+                    result={"task_id":task,"status":"error","error":f"{type(e).__name__}: {e}"}; console("[??????] "+str(e))
                 (OUTBOX/f"{task}.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8"); running.unlink(missing_ok=True); state("running")
             except Exception as e:
                 state("error",error=f"{type(e).__name__}: {e}"); running.rename(path)

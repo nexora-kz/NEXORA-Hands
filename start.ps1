@@ -37,6 +37,9 @@ if (-not $PythonPath) {
 if (-not (Test-Path -LiteralPath $PythonPath)) { exit 1 }
 $Hands = [IO.Path]::GetFullPath((Join-Path $App 'hands.py'))
 $Channel = [IO.Path]::GetFullPath((Join-Path $App 'supabase_channel.py'))
+$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
 $HandsOut = Join-Path $Log 'hands.stdout.log'
 $HandsErr = Join-Path $Log 'hands.stderr.log'
 $ChannelOut = Join-Path $Log 'channel.stdout.log'
@@ -48,7 +51,7 @@ function Test-ExactPythonScript([string]$Path) {
     }).Count -gt 0
 }
 if (-not (Test-ExactPythonScript $Hands)) {
-    Start-Process -FilePath $PythonPath -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -WindowStyle Hidden | Out-Null
+    Start-Process -FilePath $PythonPath -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -NoNewWindow | Out-Null
 }
 if (-not (Test-ExactPythonScript $Channel)) {
     Start-Process -FilePath $PythonPath -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden | Out-Null
