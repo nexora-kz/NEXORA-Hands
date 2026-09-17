@@ -7,6 +7,7 @@ import time
 import uuid
 import urllib.parse
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,9 +63,14 @@ def request(method, path, body=None, include_worker_token=True):
         headers["Authorization"] = "Bearer " + c["publishable_key"]
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
     req = urllib.request.Request(c["rest_url"] + path, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=20) as r:
-        raw = r.read().decode()
-        return json.loads(raw) if raw else None
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = r.read().decode()
+            return json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        try: detail=e.read().decode("utf-8","replace")
+        except Exception: detail=""
+        raise RuntimeError(f"HTTP {e.code} {method} {path}: {detail[:1000]}") from e
 
 def heartbeat(c, worker):
     rows = request("POST", "/rpc/hands_worker_heartbeat", {
@@ -105,6 +111,41 @@ def local_active(task_id):
     except Exception: pass
     return "none"
 
+def valid_lease_token(value):
+    try:
+        return bool(uuid.UUID(str(value)))
+    except Exception:
+        return False
+
+def repair_claim_lease(row, worker):
+    lease_token=uuid.uuid4().hex
+    q=urllib.parse.urlencode({
+        "id":"eq."+str(row["id"]),
+        "status":"eq.claimed",
+        "worker_id":"eq."+worker,
+    })
+    body={"lease_token":lease_token,"claimed_at":datetime.now(timezone.utc).isoformat(),"error":None}
+    updated=request("PATCH","/hands_commands?"+q,body) or []
+    return updated[0] if updated else None
+
+def requeue_claim(row, worker, reason):
+    filters={
+        "id":"eq."+str(row["id"]),
+        "status":"eq.claimed",
+        "worker_id":"eq."+worker,
+    }
+    if valid_lease_token(row.get("lease_token")):
+        filters["lease_token"]="eq."+str(row.get("lease_token"))
+    q=urllib.parse.urlencode(filters)
+    updated=request("PATCH","/hands_commands?"+q,{
+        "status":"queued",
+        "claimed_at":None,
+        "worker_id":None,
+        "lease_token":None,
+        "error":reason,
+    }) or []
+    return bool(updated)
+
 def recover_stale(c, worker):
     stale_seconds = int(c.get("claim_timeout_seconds") or 420)
     cutoff = datetime.now(timezone.utc).timestamp() - stale_seconds
@@ -123,9 +164,8 @@ def recover_stale(c, worker):
         if activity in ("result", "running", "executing", "queued_local"):
             guarded += 1
             continue
-        q2 = urllib.parse.urlencode({"id": "eq." + str(row["id"]), "status": "eq.claimed", "worker_id": "eq." + worker, "lease_token": "eq." + str(row.get("lease_token") or "")})
-        updated = request("PATCH", "/hands_commands?" + q2, {"status": "queued", "claimed_at": None, "worker_id": None, "error": "requeued_stale_claim"})
-        if updated: recovered += 1
+        if requeue_claim(row,worker,"requeued_stale_claim"):
+            recovered += 1
     return recovered, guarded
 
 def submit_result(c, worker, task_id, result, lease_token, error=None):
@@ -167,15 +207,26 @@ def active_entry(cmd, timeout_seconds=300):
 
 def adopt_local_claims(c, worker):
     active={}
+    repaired=0
     for row in claimed_rows(c,worker):
         task_id=str(row.get("task_id") or "")
         if not task_id:
             continue
-        if local_active(task_id) in ("result","running","executing","queued_local"):
-            active[task_id]=active_entry(row)
-    return active
+        activity=local_active(task_id)
+        if activity not in ("result","running","executing","queued_local"):
+            continue
+        if not valid_lease_token(row.get("lease_token")):
+            fixed=repair_claim_lease(row,worker)
+            if not fixed:
+                continue
+            row=fixed
+            repaired+=1
+        active[task_id]=active_entry(row)
+    return active,repaired
 
 def refresh_lease(worker, meta):
+    if not valid_lease_token(meta.get("lease_token")):
+        raise ValueError(f"invalid lease token for task {meta.get('task_id')}")
     qh=urllib.parse.urlencode({
         "id":"eq."+str(meta["id"]),
         "status":"eq.claimed",
@@ -210,9 +261,10 @@ def main():
     lease_interval=max(5.0,min(30.0,heartbeat_seconds))
     limit=max_parallel_commands(c)
     next_heartbeat=0.0
-    active=adopt_local_claims(c,worker)
+    active,repaired_legacy=adopt_local_claims(c,worker)
     save_state(status="starting",worker_id=worker,max_parallel_commands=limit,
-               active_count=len(active),active_tasks=sorted(active))
+               active_count=len(active),active_tasks=sorted(active),
+               repaired_legacy_claims=repaired_legacy)
     while True:
         try:
             now=time.monotonic()
