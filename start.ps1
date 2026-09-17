@@ -69,6 +69,7 @@ Start-Sleep -Milliseconds 300
 $handsProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -NoNewWindow -PassThru
 $channelProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru
 $statePath = Join-Path $Data 'supabase_channel_state.json'
+Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
 $connected = $false
 for ($i=0; $i -lt 90; $i++) {
     try {
