@@ -1,5 +1,5 @@
-$ErrorActionPreference = 'Stop'
 param([string]$PythonPath = '')
+$ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Data = Join-Path $Root 'data'
 $App = Join-Path $Root 'app'
