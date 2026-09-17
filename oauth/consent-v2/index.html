@@ -1,56 +1,26 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>NEXORA Hands — OAuth</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#111;color:#eee;max-width:720px;margin:0 auto;padding:40px 20px}
-    .card{background:#1b1b1b;border:1px solid #333;border-radius:14px;padding:24px}
-    button{padding:10px 18px;margin:8px 8px 0 0;border:0;border-radius:8px;cursor:pointer}
-    #approve{background:#fff;color:#111}.muted{color:#aaa}.error{color:#ff8d8d}
-    code{word-break:break-all}
-  </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEXORA Hands — OAuth</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#111;color:#eee;max-width:720px;margin:0 auto;padding:40px 20px}.card{background:#1b1b1b;border:1px solid #333;border-radius:14px;padding:24px}button,input{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #555;background:#222;color:#eee}button{cursor:pointer;margin:8px 8px 0 0}#approve{background:#fff;color:#111}.muted{color:#aaa}.error{color:#ff8d8d}.ok{color:#8fe39a}input{width:100%;box-sizing:border-box;margin:10px 0 14px}code{word-break:break-all}</style>
 </head>
-<body>
-  <div class="card">
-    <h1>NEXORA Hands</h1>
-    <p id="status" class="muted">Загрузка OAuth…</p>
-    <div id="details" hidden>
-      <p>Приложение: <strong id="client"></strong></p>
-      <p>Запрашиваемые права: <code id="scope"></code></p>
-      <button id="approve">Разрешить</button>
-      <button id="deny">Отклонить</button>
-    </div>
-  </div>
+<body><div class="card">
+<h1>NEXORA Hands</h1><p id="status" class="muted">Загрузка OAuth…</p>
+<div id="login" hidden><p>Для продолжения войдите в Supabase.</p><input id="email" type="email" autocomplete="email" placeholder="Email"><button id="send">Отправить ссылку входа</button><p id="loginStatus" class="muted"></p></div>
+<div id="details" hidden><p>Приложение: <strong id="client"></strong></p><p>Запрашиваемые права: <code id="scope"></code></p><button id="approve">Разрешить</button><button id="deny">Отклонить</button></div>
+</div>
 <script type="module">
-(async()=>{
-  const status=document.getElementById('status');
-  const details=document.getElementById('details');
-  const client=document.getElementById('client');
-  const scope=document.getElementById('scope');
-  const approve=document.getElementById('approve');
-  const deny=document.getElementById('deny');
-  try{
-    const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
-    const supabase=createClient('https://igeddbknrctsdufieosg.supabase.co','sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2');
-    const authorizationId=new URLSearchParams(location.search).get('authorization_id');
-    if(!authorizationId){status.textContent='Ошибка: отсутствует authorization_id';status.className='error';return;}
-    status.textContent='Проверка входа…';
-    const {data:{session}}=await supabase.auth.getSession();
-    if(!session){status.textContent='Требуется вход в Supabase.';status.className='error';return;}
-    status.textContent='Получение данных запроса…';
-    const {data,error}=await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
-    if(error) throw error;
-    if(!('authorization_id' in data)){location.href=data.redirect_url;return;}
-    client.textContent=data.client?.name||data.client_name||data.client_id||'OAuth client';
-    scope.textContent=data.scope||'не указаны';
-    details.hidden=false;
-    status.textContent='Подтвердите доступ NEXORA Hands.';
-    approve.onclick=async()=>{approve.disabled=true;deny.disabled=true;const r=await supabase.auth.oauth.approveAuthorization(authorizationId);if(r.error)throw r.error;location.href=r.data.redirect_url;};
-    deny.onclick=async()=>{approve.disabled=true;deny.disabled=true;const r=await supabase.auth.oauth.denyAuthorization(authorizationId);if(r.error)throw r.error;location.href=r.data.redirect_url;};
-  }catch(e){status.textContent='Ошибка OAuth: '+(e?.message||String(e));status.className='error';console.error(e);}
-})();
-</script>
-</body>
-</html>
+(async()=>{const status=document.getElementById('status'),login=document.getElementById('login'),details=document.getElementById('details'),client=document.getElementById('client'),scope=document.getElementById('scope'),approve=document.getElementById('approve'),deny=document.getElementById('deny');try{
+const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+const supabase=createClient('https://igeddbknrctsdufieosg.supabase.co','sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2');
+const authorizationId=new URLSearchParams(location.search).get('authorization_id');
+if(!authorizationId){status.textContent='Ошибка: отсутствует authorization_id';status.className='error';return}
+const {data:{session},error:sessionError}=await supabase.auth.getSession();
+if(sessionError)throw sessionError;
+if(!session){status.textContent='Требуется вход в Supabase.';login.hidden=false;document.getElementById('send').onclick=async()=>{const email=document.getElementById('email').value.trim();if(!email)return;const r=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:location.href}});const ls=document.getElementById('loginStatus');ls.textContent=r.error?r.error.message:'Ссылка входа отправлена на email.';ls.className=r.error?'error':'ok'};return}
+status.textContent='Получение данных запроса…';const {data,error}=await supabase.auth.oauth.getAuthorizationDetails(authorizationId);if(error)throw error;if(!('authorization_id' in data)){location.href=data.redirect_url;return}
+client.textContent=data.client?.name||data.client_name||data.client_id||'OAuth client';scope.textContent=data.scope||'не указаны';details.hidden=false;status.textContent='Подтвердите доступ NEXORA Hands.';
+approve.onclick=async()=>{approve.disabled=true;deny.disabled=true;const r=await supabase.auth.oauth.approveAuthorization(authorizationId);if(r.error)throw r.error;location.href=r.data.redirect_url};deny.onclick=async()=>{approve.disabled=true;deny.disabled=true;const r=await supabase.auth.oauth.denyAuthorization(authorizationId);if(r.error)throw r.error;location.href=r.data.redirect_url};
+}catch(e){status.textContent='Ошибка OAuth: '+(e?.message||String(e));status.className='error';console.error(e)}})();
+</script></body></html>
