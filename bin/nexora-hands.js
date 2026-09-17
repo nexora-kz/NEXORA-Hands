@@ -17,28 +17,54 @@ function refreshPath() {
   process.env.Path = `${machine};${user}`;
 }
 
-function hasUsablePython() {
+function pythonCandidates() {
+  const local = process.env.LOCALAPPDATA || '';
+  return [
+    path.join(local, 'Programs', 'Python', 'Python314', 'python.exe'),
+    path.join(local, 'Programs', 'Python', 'Python313', 'python.exe'),
+    'C:\\Python314\\python.exe',
+    'C:\\Python313\\python.exe'
+  ];
+}
+
+function findPython() {
+  refreshPath();
+  for (const candidate of pythonCandidates()) {
+    if (candidate.length > 3 && fs.existsSync(candidate)) return candidate;
+  }
   let r = run('python', ['--version']);
-  if (r.status === 0) return true;
+  if (r.status === 0) return 'python';
   r = run('py', ['--version']);
-  return r.status === 0;
+  if (r.status === 0) return 'py';
+  return null;
 }
 
 function installPython() {
-  console.log('[BOOT] Python not found. Installing Python automatically...');
-  const wingetArgs = [
-    'install', '--id', 'Python.Python.3.13', '--exact', '--source', 'winget',
-    '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity'
-  ];
-  let r = run('winget', wingetArgs);
-  if (r.status === 0) return true;
+  const version = '3.14.7';
+  const installer = path.join(process.env.TEMP || '.', `NEXORA-Python-${version}-amd64.exe`);
+  const url = `https://www.python.org/ftp/python/${version}/python-${version}-amd64.exe`;
+  console.log('[BOOT] Python not found. Downloading official Python installer...');
 
-  console.log('[BOOT] Python 3.13 install failed. Trying Python 3.14...');
-  r = run('winget', [
-    'install', '--id', 'Python.Python.3.14', '--exact', '--source', 'winget',
-    '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity'
+  const download = run('powershell.exe', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+    `$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -Uri '${url}' -OutFile '${installer}'`
   ]);
-  return r.status === 0;
+  if (download.status !== 0 || !fs.existsSync(installer)) return false;
+
+  console.log('[BOOT] Installing Python for the current Windows user...');
+  const install = run(installer, [
+    '/quiet',
+    'InstallAllUsers=0',
+    'PrependPath=1',
+    'Include_pip=1',
+    'Include_launcher=1',
+    'SimpleInstall=1'
+  ]);
+  try { fs.unlinkSync(installer); } catch {}
+  if (install.status !== 0) return false;
+
+  refreshPath();
+  return !!findPython();
 }
 
 console.log('============================================================');
@@ -51,15 +77,18 @@ if (mode !== 'remote') {
   process.exit(2);
 }
 
-if (!hasUsablePython() && !installPython()) {
-  console.error('[ERROR] Python could not be installed automatically.');
-  console.error('[ERROR] Windows Package Manager (winget) did not install a usable Python runtime.');
-  process.exit(1);
+let Python = findPython();
+if (!Python) {
+  if (!installPython()) {
+    console.error('[ERROR] Python could not be installed automatically.');
+    console.error('[ERROR] The official Python installer did not produce a usable runtime.');
+    process.exit(1);
+  }
+  Python = findPython();
 }
 
-refreshPath();
-if (!hasUsablePython()) {
-  console.error('[ERROR] Python installation finished, but Python is not available in this process.');
+if (!Python) {
+  console.error('[ERROR] Python installation finished, but Python is not available.');
   process.exit(1);
 }
 
@@ -68,7 +97,7 @@ if (!fs.existsSync(start)) {
   process.exit(1);
 }
 
-console.log('[BOOT] Python runtime ready.');
+console.log(`[BOOT] Python runtime ready: ${Python}`);
 console.log('[BOOT] Starting NEXORA Hands in this PowerShell console...');
 
 const r = spawnSync('powershell.exe', [
