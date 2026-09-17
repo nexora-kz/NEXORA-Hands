@@ -52,22 +52,25 @@ function Stop-ExactPythonScript([string]$Path) {
 Stop-ExactPythonScript $Hands
 Stop-ExactPythonScript $Channel
 Start-Sleep -Milliseconds 300
-$handsProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -NoNewWindow -PassThru
-$channelProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru
-$statePath = Join-Path $Data 'supabase_channel_state.json'
-Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
-$connected = $false
-for ($i=0; $i -lt 90; $i++) {
-    try {
-        if (Test-Path -LiteralPath $statePath) {
-            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-            if ($state.heartbeat_ok -eq $true) { $connected = $true; break }
-        }
-    } catch {}
-    Start-Sleep -Seconds 1
-}
-if ($connected) { Write-Host 'NEXORA Hands - connected.' } else { Write-Host 'NEXORA Hands - connection failed.'; exit 1 }
+$handsProc = $null
+$channelProc = $null
 try {
+    $handsProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -NoNewWindow -PassThru
+    $channelProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru
+    $statePath = Join-Path $Data 'supabase_channel_state.json'
+    Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
+    $connected = $false
+    for ($i=0; $i -lt 90; $i++) {
+        try {
+            if (Test-Path -LiteralPath $statePath) {
+                $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+                if ($state.heartbeat_ok -eq $true) { $connected = $true; break }
+            }
+        } catch {}
+        Start-Sleep -Seconds 1
+    }
+    if (-not $connected) { Write-Host 'NEXORA Hands - connection failed.'; exit 1 }
+    Write-Host 'NEXORA Hands - connected.'
     while ($true) { Start-Sleep -Seconds 5 }
 } finally {
     if ($handsProc) { Stop-Process -Id $handsProc.Id -Force -ErrorAction SilentlyContinue }
