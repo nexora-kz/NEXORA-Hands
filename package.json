@@ -1,0 +1,20 @@
+{
+  "name": "nexora-hands",
+  "version": "0.1.2",
+  "description": "NEXORA Hands Windows remote execution launcher",
+  "bin": {
+    "nexora-hands": "bin/nexora-hands.js"
+  },
+  "files": [
+    "bin",
+    "app",
+    "start.ps1",
+    "stop.ps1",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "repository": "github:nexora-kz/NEXORA-Hands"
+}

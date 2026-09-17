@@ -1,0 +1,9 @@
+{
+  "rest_url": "https://igeddbknrctsdufieosg.supabase.co/rest/v1",
+  "publishable_key": "sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2",
+  "worker_id": "",
+  "worker_token": "",
+  "poll_seconds": 1.0,
+  "claim_timeout_seconds": 420,
+  "heartbeat_seconds": 15
+}
