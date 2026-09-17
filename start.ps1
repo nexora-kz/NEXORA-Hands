@@ -5,12 +5,15 @@ $App = Join-Path $Root 'app'
 $Log = Join-Path $Data 'logs'
 New-Item -ItemType Directory -Force -Path $Log | Out-Null
 
+# Refresh PATH so a Python installation made by winget in the previous step is visible.
+$machinePath = [Environment]::GetEnvironmentVariable('Path','Machine')
+$userPath = [Environment]::GetEnvironmentVariable('Path','User')
+$env:Path = "$machinePath;$userPath"
+
 # First-run runtime identity: each PC gets its own persistent worker_id.
 $RuntimeConfig = Join-Path $Data 'hands_supabase_config.json'
 $TemplateConfig = Join-Path $App 'hands_supabase_config.json'
-if (-not (Test-Path $RuntimeConfig)) {
-    Copy-Item $TemplateConfig $RuntimeConfig -Force
-}
+if (-not (Test-Path $RuntimeConfig)) { Copy-Item $TemplateConfig $RuntimeConfig -Force }
 try {
     $cfg = Get-Content $RuntimeConfig -Raw | ConvertFrom-Json
     if ($null -eq $cfg.worker_id) { $cfg | Add-Member -NotePropertyName worker_id -NotePropertyValue '' -Force }
@@ -28,14 +31,15 @@ Write-Host '============================================================' -Foreg
 Write-Host '[BOOT] Starting local execution agent...' -ForegroundColor Gray
 
 $Python = $null
-foreach ($candidate in @('C:\Python314\python.exe','py','python')) {
-    try {
-        if ($candidate -eq 'py') { & py -3.14 --version *> $null; if ($LASTEXITCODE -eq 0) { $Python='py'; break } }
-        elseif ($candidate -eq 'python') { & python --version *> $null; if ($LASTEXITCODE -eq 0) { $Python='python'; break } }
-        elseif (Test-Path $candidate) { $Python=$candidate; break }
-    } catch {}
+$PythonArgs = @()
+try { & python --version *> $null; if ($LASTEXITCODE -eq 0) { $Python='python' } } catch {}
+if (-not $Python) {
+    try { & py --version *> $null; if ($LASTEXITCODE -eq 0) { $Python='py'; $PythonArgs=@() } } catch {}
 }
-if (-not $Python) { Write-Host '[ERROR] Python 3.14 is not installed.' -ForegroundColor Red; Write-Host '[INFO] Run install.ps1 first.' -ForegroundColor Yellow; exit 1 }
+if (-not $Python) {
+    Write-Host '[ERROR] Python is not available after automatic installation.' -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "[BOOT] Python: $Python" -ForegroundColor DarkGray
 $Hands = Join-Path $App 'hands.py'
@@ -56,7 +60,7 @@ if ($handsProc) {
     Write-Host "[HANDS] Already running PID $($handsProc.ProcessId)" -ForegroundColor Green
 } else {
     Write-Host '[HANDS] Starting hands.py...' -ForegroundColor Yellow
-    if ($Python -eq 'py') { $handsProc = Start-Process py -ArgumentList '-3.14',"`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -PassThru }
+    if ($Python -eq 'py') { $handsProc = Start-Process py -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -PassThru }
     else { $handsProc = Start-Process $Python -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -PassThru }
     Write-Host "[HANDS] PID $($handsProc.Id)" -ForegroundColor Green
 }
@@ -64,7 +68,7 @@ if ($channelProc) {
     Write-Host "[CHANNEL] Already running PID $($channelProc.ProcessId)" -ForegroundColor Green
 } else {
     Write-Host '[CHANNEL] Starting Supabase transport...' -ForegroundColor Yellow
-    if ($Python -eq 'py') { $channelProc = Start-Process py -ArgumentList '-3.14',"`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -PassThru }
+    if ($Python -eq 'py') { $channelProc = Start-Process py -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -PassThru }
     else { $channelProc = Start-Process $Python -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -PassThru }
     Write-Host "[CHANNEL] PID $($channelProc.Id)" -ForegroundColor Green
 }
@@ -103,8 +107,6 @@ while ($true) {
                     } catch {}
                 }
             }
-    } catch {
-        Write-Host "[MONITOR][ERROR] $($_.Exception.Message)" -ForegroundColor Red
-    }
+    } catch { Write-Host "[MONITOR][ERROR] $($_.Exception.Message)" -ForegroundColor Red }
     Start-Sleep -Seconds 1
 }
