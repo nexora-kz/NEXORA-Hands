@@ -1,18 +1,10 @@
-param(
-    [string]$PythonPath = ''
-)
-
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Data = Join-Path $Root 'data'
 $App = Join-Path $Root 'app'
 $Log = Join-Path $Data 'logs'
-New-Item -ItemType Directory -Force -Path $Log,$App,$Data | Out-Null
-
-if (-not $PythonPath -or -not (Test-Path -LiteralPath $PythonPath)) {
-    $PythonPath = (Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
-}
-if (-not $PythonPath -or -not (Test-Path -LiteralPath $PythonPath)) { exit 1 }
+New-Item -ItemType Directory -Force -Path $Log | Out-Null
+New-Item -ItemType Directory -Force -Path $App | Out-Null
 
 $RuntimeConfig = Join-Path $Data 'hands_supabase_config.json'
 $TemplateConfig = Join-Path $App 'hands_supabase_config.json'
@@ -44,6 +36,13 @@ try {
     if (-not (Test-Path $Hands) -or -not (Test-Path $Channel)) { exit 1 }
 }
 
+$Python = $null
+try { & python.exe --version *> $null; if ($LASTEXITCODE -eq 0) { $Python = (Get-Command python.exe).Source } } catch {}
+if (-not $Python) {
+    try { & py.exe --version *> $null; if ($LASTEXITCODE -eq 0) { $Python = (Get-Command py.exe).Source } } catch {}
+}
+if (-not $Python) { exit 1 }
+
 $HandsOut = Join-Path $Log 'hands.stdout.log'
 $HandsErr = Join-Path $Log 'hands.stderr.log'
 $ChannelOut = Join-Path $Log 'channel.stdout.log'
@@ -57,10 +56,10 @@ function Find-PythonProcess([string]$script) {
 $handsProc = Find-PythonProcess 'hands.py'
 $channelProc = Find-PythonProcess 'supabase_channel.py'
 if (-not $handsProc) {
-    $handsProc = Start-Process -FilePath $PythonPath -ArgumentList @("`"$Hands`"") -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -WindowStyle Hidden -PassThru
+    Start-Process -FilePath $Python -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -WindowStyle Hidden | Out-Null
 }
 if (-not $channelProc) {
-    $channelProc = Start-Process -FilePath $PythonPath -ArgumentList @("`"$Channel`"") -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru
+    Start-Process -FilePath $Python -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden | Out-Null
 }
 
 $connected = $false
@@ -74,10 +73,13 @@ for ($i = 0; $i -lt 60; $i++) {
     } catch {}
     Start-Sleep -Seconds 1
 }
+
 if ($connected) {
-    Write-Host 'NEXORA Hands — подключение установлено.' -ForegroundColor Green
+    $msg = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('TkVYT1JBIEhhdmRzIOKAkyDQm9LINCc0L7RgtGC0LXRgiDRgdC/0YDQsNCy0LrQvtC5LiA='))
+    Write-Host $msg
 } else {
-    Write-Host 'NEXORA Hands — подключение не установлено.' -ForegroundColor Red
+    $msg = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('TkVYT1JBIEhhdmRzIOKAkyDQm9LINCc0L7RgtGC0LXRgiDRgdC/0YDQsNCy0LrQvtC5LiA='))
+    Write-Host $msg
 }
 
 while ($true) { Start-Sleep -Seconds 5 }
