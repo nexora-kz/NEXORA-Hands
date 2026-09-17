@@ -29,11 +29,11 @@ $Channel = Join-Path $App 'supabase_channel.py'
 $HandsTmp = "$Hands.download"
 $ChannelTmp = "$Channel.download"
 try {
-    Invoke-WebRequest -Uri "$RepoBase/hands.py" -OutFile $HandsTmp -UseBasicParsing
+    Invoke-WebRequest -Uri "$RepoBase/hands.py" -OutFile $HandsTmp -UseBasicParsing *> $null
     if ((Get-Item $HandsTmp).Length -lt 1000) { throw 'hands.py download failed' }
     Move-Item $HandsTmp $Hands -Force
 
-    Invoke-WebRequest -Uri "$RepoBase/supabase_channel.py" -OutFile $ChannelTmp -UseBasicParsing
+    Invoke-WebRequest -Uri "$RepoBase/supabase_channel.py" -OutFile $ChannelTmp -UseBasicParsing *> $null
     if ((Get-Item $ChannelTmp).Length -lt 1000) { throw 'supabase_channel.py download failed' }
     Move-Item $ChannelTmp $Channel -Force
 } catch {
@@ -69,7 +69,7 @@ if (-not $channelProc) {
     else { $channelProc = Start-Process $Python -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru }
 }
 
-# Keep the user-facing console silent until the transport is actually connected.
+# User-facing console contains status only. Technical diagnostics remain in logs.
 $connected = $false
 for ($i = 0; $i -lt 60; $i++) {
     try {
@@ -83,6 +83,8 @@ for ($i = 0; $i -lt 60; $i++) {
 }
 if ($connected) {
     Write-Host 'NEXORA Hands — подключение установлено.' -ForegroundColor Green
+} else {
+    Write-Host 'NEXORA Hands — подключение не установлено.' -ForegroundColor Red
 }
 
 while ($true) {
