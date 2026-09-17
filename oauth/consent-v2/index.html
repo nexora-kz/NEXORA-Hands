@@ -33,7 +33,7 @@
   const deny=document.getElementById('deny');
   try{
     const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
-    const supabase=createClient('https://igeddbknrctsdufieosg.supabase.co','sb_publishable_9a6f0c6f4e8a4f7bb3d4d2d0a1b2c3d4');
+    const supabase=createClient('https://igeddbknrctsdufieosg.supabase.co','sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2');
     const authorizationId=new URLSearchParams(location.search).get('authorization_id');
     if(!authorizationId){status.textContent='Ошибка: отсутствует authorization_id';status.className='error';return;}
     status.textContent='Проверка входа…';
@@ -43,7 +43,7 @@
     const {data,error}=await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
     if(error) throw error;
     if(!('authorization_id' in data)){location.href=data.redirect_url;return;}
-    client.textContent=data.client_name||data.client_id||'OAuth client';
+    client.textContent=data.client?.name||data.client_name||data.client_id||'OAuth client';
     scope.textContent=data.scope||'не указаны';
     details.hidden=false;
     status.textContent='Подтвердите доступ NEXORA Hands.';
