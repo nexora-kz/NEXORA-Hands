@@ -24,7 +24,7 @@ body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee}main{m
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const SUPABASE_URL='https://igeddbknrctsdufieosg.supabase.co';
-const SUPABASE_KEY='';
+const SUPABASE_KEY='sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2';
 const API=SUPABASE_URL+'/functions/v1/nexora-hands-control-v2';
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 let selected=null;
@@ -37,7 +37,7 @@ async function signIn(){
   if(error)return setAuth(error.message);
   setAuth('Ссылка для входа отправлена на '+email+'.');
 }
-async function signOut(){await sb.auth.signOut();selected=null;setSession(null)}
+async function signOut(){await sb.auth.signOut();selected=null;document.getElementById('selected').textContent='ПК не выбран';setSession(null)}
 function setAuth(text){document.getElementById('auth').textContent=text}
 function setSession(user){
   const login=document.getElementById('loginPanel');const session=document.getElementById('sessionPanel');
