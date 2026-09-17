@@ -10,11 +10,20 @@ $node=Find-CommandPath 'node.exe'
 if(-not $node){ Write-Host '[BOOT] Node.js not found. Installing Node.js LTS...'; $winget=Find-CommandPath 'winget.exe'; if(-not $winget){throw 'Windows Package Manager (winget) is required for automatic Node.js installation.'}; & $winget install --id OpenJS.NodeJS.LTS --exact --accept-source-agreements --accept-package-agreements; Refresh-Path; $node=Find-CommandPath 'node.exe' }
 if(-not $node){throw 'Node.js LTS installation completed but node.exe was not found.'}
 Write-Host "[BOOT] Node.js ready: $(& $node --version)"
-$npx=Find-CommandPath 'npx.cmd'
-if(-not $npx){throw 'npx.cmd was not found after Node.js installation.'}
-$cache=Join-Path $env:TEMP ("NEXORA-Hands-npm-cache-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force -Path $cache | Out-Null
-$env:npm_config_cache=$cache
-Write-Host "[BOOT] Isolated npm cache: $cache"
-Write-Host '[BOOT] Starting NEXORA Hands from GitHub...' -ForegroundColor Cyan
-try { & $npx --yes github:nexora-kz/NEXORA-Hands remote; exit $LASTEXITCODE } finally { Remove-Item -LiteralPath $cache -Recurse -Force -ErrorAction SilentlyContinue }
+$work=Join-Path $env:TEMP ("NEXORA-Hands-" + [guid]::NewGuid().ToString('N'))
+$zip=Join-Path $env:TEMP ("NEXORA-Hands-" + [guid]::NewGuid().ToString('N') + '.zip')
+try {
+  New-Item -ItemType Directory -Force -Path $work | Out-Null
+  Write-Host '[BOOT] Downloading NEXORA Hands directly from GitHub...'
+  Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/nexora-kz/NEXORA-Hands/archive/refs/heads/main.zip' -OutFile $zip
+  Expand-Archive -LiteralPath $zip -DestinationPath $work -Force
+  $root=Join-Path $work 'NEXORA-Hands-main'
+  if(-not (Test-Path (Join-Path $root 'package.json'))){throw 'Downloaded NEXORA Hands package is incomplete.'}
+  Write-Host '[BOOT] Starting NEXORA Hands without requiring Git...'
+  $nexora=Join-Path $root 'bin\nexora-hands.js'
+  & $node $nexora 'remote'
+  exit $LASTEXITCODE
+} finally {
+  Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+}
