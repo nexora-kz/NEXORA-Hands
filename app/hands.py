@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 os.environ.setdefault("PYTHONUTF8","1")
@@ -36,8 +37,27 @@ ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/"data"; PROCESS_DIR=DATA/"processes"; PROCESS_DIR.mkdir(parents=True,exist_ok=True)
 INBOX,OUTBOX=DATA/"inbox",DATA/"outbox"; STATE=DATA/"state.json"
 for p in (INBOX,OUTBOX): p.mkdir(parents=True,exist_ok=True)
-def state(status,task_id="",error=""):
-    STATE.write_text(json.dumps({"name":"NEXORA Hands","status":status,"pid":os.getpid(),"task_id":task_id,"error":error,"updated_at":time.time()},ensure_ascii=False,indent=2),encoding="utf-8")
+DEFAULT_MAX_PARALLEL_COMMANDS=5
+
+def max_parallel_commands():
+    value=os.environ.get("NEXORA_HANDS_MAX_PARALLEL")
+    if value is None:
+        cp=DATA/"hands_local_config.json"
+        if cp.exists():
+            try: value=json.loads(cp.read_text(encoding="utf-8")).get("max_parallel_commands")
+            except Exception: value=None
+    try: value=int(value or DEFAULT_MAX_PARALLEL_COMMANDS)
+    except Exception: value=DEFAULT_MAX_PARALLEL_COMMANDS
+    return max(1,min(16,value))
+
+def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
+    tasks=list(active_tasks or [])
+    payload={"name":"NEXORA Hands","status":status,"pid":os.getpid(),"task_id":task_id,"error":error,
+             "active_tasks":tasks,"active_count":len(tasks),
+             "max_parallel_commands":int(max_parallel or max_parallel_commands()),"updated_at":time.time()}
+    tmp=STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8")
+    os.replace(tmp,STATE)
 OP_RU={"shell":"PowerShell","read_file":"\u0427\u0442\u0435\u043d\u0438\u0435 \u0444\u0430\u0439\u043b\u0430","write_file":"\u0417\u0430\u043f\u0438\u0441\u044c \u0444\u0430\u0439\u043b\u0430","list_directory":"\u041f\u0440\u043e\u0441\u043c\u043e\u0442\u0440 \u043f\u0430\u043f\u043a\u0438","copy":"\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435","move":"\u041f\u0435\u0440\u0435\u043c\u0435\u0449\u0435\u043d\u0438\u0435","delete":"\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435","process_list":"\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u043e\u0432","process_start":"\u0417\u0430\u043f\u0443\u0441\u043a \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430","process_wait":"\u041e\u0436\u0438\u0434\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430","system_info":"\u0418\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u044f \u043e \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0435","system_resources":"\u0420\u0435\u0441\u0443\u0440\u0441\u044b \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0430","start_search":"\u041f\u043e\u0438\u0441\u043a \u0444\u0430\u0439\u043b\u043e\u0432"}
 def console(text):
     print(text, flush=True)
@@ -278,27 +298,98 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         if names is None: return {"count":len(os.environ),"names":sorted(os.environ.keys())}
         return {"values":{str(n):os.environ.get(str(n)) for n in names}}
     raise ValueError(f"unsupported operation: {op}")
+def recover_interrupted_tasks():
+    recovered=[]
+    for running in sorted(INBOX.glob("*.running")):
+        task=running.stem
+        try:
+            c=json.loads(running.read_text(encoding="utf-8-sig"))
+            task=str(c.get("task_id") or task)
+        except Exception:
+            pass
+        result_file=OUTBOX/f"{task}.json"
+        if not result_file.exists():
+            result={"task_id":task,"status":"error","error":"worker_restarted_during_task"}
+            tmp=result_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
+            os.replace(tmp,result_file)
+        running.unlink(missing_ok=True)
+        recovered.append(task)
+    return recovered
+
+def process_running(running):
+    task=running.stem
+    try:
+        c=json.loads(running.read_text(encoding="utf-8-sig"))
+        task=str(c.get("task_id") or task)
+        op=str(c.get("operation") or c.get("type") or "").strip().lower()
+        title=OP_RU.get(op,op or "\u0417\u0430\u0434\u0430\u0447\u0430")
+        console(f"\n[\u0417\u0410\u0414\u0410\u0427\u0410 {task}] {title}")
+        if op=="shell":
+            console(f"[\u041a\u041e\u041c\u0410\u041d\u0414\u0410 {task}] "+safe_command_preview(c.get("command")))
+        console(f"[\u0412\u042b\u041f\u041e\u041b\u041d\u042f\u0415\u0422\u0421\u042f {task}]")
+        try:
+            result={"task_id":task,"status":"completed","payload":execute(c)}
+            console(f"[\u0413\u041e\u0422\u041e\u0412\u041e {task}] \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u0443\u0441\u043f\u0435\u0448\u043d\u043e")
+            payload=result.get("payload") or {}
+            out=payload.get("stdout") if isinstance(payload,dict) else None
+            if out and str(out).strip():
+                console(f"[\u0420\u0415\u0417\u0423\u041b\u042c\u0422\u0410\u0422 {task}] "+str(out).strip())
+        except Exception as e:
+            result={"task_id":task,"status":"error","error":f"{type(e).__name__}: {e}"}
+            console(f"[\u041e\u0428\u0418\u0411\u041a\u0410 {task}] "+str(e))
+    except Exception as e:
+        result={"task_id":task,"status":"error","error":f"{type(e).__name__}: {e}"}
+        console(f"[\u041e\u0428\u0418\u0411\u041a\u0410 {task}] "+str(e))
+    result_file=OUTBOX/f"{task}.json"
+    tmp=result_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
+    os.replace(tmp,result_file)
+    running.unlink(missing_ok=True)
+    return task,result.get("status")
+
 def main():
-    state("running")
-    while True:
-        for path in sorted(INBOX.glob("*.json")):
-            running=path.with_suffix(".running")
-            try: os.replace(path,running)
-            except OSError: continue
-            try:
-                c=json.loads(running.read_text(encoding="utf-8-sig")); task=str(c.get("task_id") or uuid.uuid4()); state("executing",task)
-                op=str(c.get("operation") or c.get("type") or "").strip().lower(); title=OP_RU.get(op,op or "\u0417\u0430\u0434\u0430\u0447\u0430")
-                console(f"\n[\u0417\u0410\u0414\u0410\u0427\u0410] {title}")
-                if op=="shell": console("[\u041a\u041e\u041c\u0410\u041d\u0414\u0410] "+safe_command_preview(c.get("command")))
-                console("[\u0412\u042b\u041f\u041e\u041b\u041d\u042f\u0415\u0422\u0421\u042f]")
+    limit=max_parallel_commands()
+    interrupted=recover_interrupted_tasks()
+    if interrupted:
+        console("[RECOVERY] interrupted tasks finalized: "+", ".join(interrupted))
+    state("running",max_parallel=limit)
+    last_state=None
+    with ThreadPoolExecutor(max_workers=limit,thread_name_prefix="nexora-hands") as pool:
+        active={}
+        while True:
+            for future in list(active):
+                if not future.done():
+                    continue
+                task=active.pop(future)
                 try:
-                    result={"task_id":task,"status":"completed","payload":execute(c)}; console("[\u0413\u041e\u0422\u041e\u0412\u041e] \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u0443\u0441\u043f\u0435\u0448\u043d\u043e")
-                    payload=result.get("payload") or {}; out=payload.get("stdout") if isinstance(payload,dict) else None
-                    if out and str(out).strip(): console("[\u0420\u0415\u0417\u0423\u041b\u042c\u0422\u0410\u0422] "+str(out).strip())
+                    future.result()
                 except Exception as e:
-                    result={"task_id":task,"status":"error","error":f"{type(e).__name__}: {e}"}; console("[\u041e\u0428\u0418\u0411\u041a\u0410] "+str(e))
-                (OUTBOX/f"{task}.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8"); running.unlink(missing_ok=True); state("running")
-            except Exception as e:
-                state("error",error=f"{type(e).__name__}: {e}"); running.rename(path)
-        time.sleep(.25)
+                    console(f"[\u041e\u0428\u0418\u0411\u041a\u0410 {task}] worker future: {type(e).__name__}: {e}")
+            capacity=limit-len(active)
+            if capacity>0:
+                for path in sorted(INBOX.glob("*.json")):
+                    if capacity<=0:
+                        break
+                    running=path.with_suffix(".running")
+                    try:
+                        os.replace(path,running)
+                    except OSError:
+                        continue
+                    task=running.stem
+                    try:
+                        c=json.loads(running.read_text(encoding="utf-8-sig"))
+                        task=str(c.get("task_id") or task)
+                    except Exception:
+                        pass
+                    future=pool.submit(process_running,running)
+                    active[future]=task
+                    capacity-=1
+            tasks=sorted(active.values())
+            current=("executing" if tasks else "running",tuple(tasks))
+            if current!=last_state:
+                state(current[0],task_id=(tasks[0] if tasks else ""),active_tasks=tasks,max_parallel=limit)
+                last_state=current
+            time.sleep(.1)
+
 if __name__=="__main__": main()

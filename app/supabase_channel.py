@@ -21,6 +21,13 @@ STATE = DATA / "supabase_channel_state.json"
 INBOX.mkdir(parents=True, exist_ok=True)
 OUTBOX.mkdir(parents=True, exist_ok=True)
 
+DEFAULT_MAX_PARALLEL_COMMANDS = 5
+
+def max_parallel_commands(c):
+    try: value = int(c.get("max_parallel_commands") or DEFAULT_MAX_PARALLEL_COMMANDS)
+    except Exception: value = DEFAULT_MAX_PARALLEL_COMMANDS
+    return max(1, min(16, value))
+
 def cfg():
     # Reuse persistent machine identity even when launched from %TEMP%.
     for source in (CONFIG, PERSISTENT_CONFIG, DEFAULT_CONFIG):
@@ -139,65 +146,124 @@ def submit_result(c, worker, task_id, result, lease_token, error=None):
         return bool(next(iter(rows[0].values())))
     return False
 
+def claimed_rows(c, worker):
+    q = urllib.parse.urlencode({
+        "select":"id,task_id,claimed_at,lease_token",
+        "status":"eq.claimed",
+        "worker_id":"eq."+worker,
+        "order":"claimed_at.asc",
+        "limit":"100",
+    })
+    return request("GET","/hands_commands?"+q) or []
+
+def active_entry(cmd, timeout_seconds=300):
+    return {
+        "id":cmd.get("id"),
+        "task_id":str(cmd.get("task_id") or ""),
+        "lease_token":str(cmd.get("lease_token") or ""),
+        "deadline":time.monotonic()+float(timeout_seconds),
+        "lease_refresh_at":0.0,
+    }
+
+def adopt_local_claims(c, worker):
+    active={}
+    for row in claimed_rows(c,worker):
+        task_id=str(row.get("task_id") or "")
+        if not task_id:
+            continue
+        if local_active(task_id) in ("result","running","executing","queued_local"):
+            active[task_id]=active_entry(row)
+    return active
+
+def refresh_lease(worker, meta):
+    qh=urllib.parse.urlencode({
+        "id":"eq."+str(meta["id"]),
+        "status":"eq.claimed",
+        "worker_id":"eq."+worker,
+        "lease_token":"eq."+str(meta["lease_token"]),
+    })
+    request("PATCH","/hands_commands?"+qh,{"claimed_at":datetime.now(timezone.utc).isoformat()})
+
+def dispatch_claimed(cmd):
+    task_id=str(cmd.get("task_id") or "")
+    if not task_id:
+        raise ValueError("claimed command has no task_id")
+    target=INBOX/f"{task_id}.json"
+    if target.exists() or (OUTBOX/f"{task_id}.json").exists() or (INBOX/f"{task_id}.running").exists():
+        raise ValueError(f"duplicate task_id: {task_id}")
+    local_command=dict(cmd.get("command") or {})
+    local_command["task_id"]=task_id
+    tmp=target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(local_command,ensure_ascii=False),encoding="utf-8")
+    os.replace(tmp,target)
+    return task_id
+
 def main():
-    c = cfg()
-    if not c.get("worker_token"): c = register_worker(c)
-    worker = str(c.get("worker_id") or "")
-    if not worker: raise RuntimeError("worker_id is empty after registration")
-    poll = float(c.get("poll_seconds") or 1.0)
-    heartbeat_seconds = max(5.0, float(c.get("heartbeat_seconds") or 15))
-    next_heartbeat = 0.0
-    save_state(status="starting", worker_id=worker)
+    c=cfg()
+    if not c.get("worker_token"):
+        c=register_worker(c)
+    worker=str(c.get("worker_id") or "")
+    if not worker:
+        raise RuntimeError("worker_id is empty after registration")
+    poll=max(0.1,float(c.get("poll_seconds") or 1.0))
+    heartbeat_seconds=max(5.0,float(c.get("heartbeat_seconds") or 15))
+    lease_interval=max(5.0,min(30.0,heartbeat_seconds))
+    limit=max_parallel_commands(c)
+    next_heartbeat=0.0
+    active=adopt_local_claims(c,worker)
+    save_state(status="starting",worker_id=worker,max_parallel_commands=limit,
+               active_count=len(active),active_tasks=sorted(active))
     while True:
         try:
-            now = time.monotonic()
-            if now >= next_heartbeat:
-                ok = heartbeat(c, worker)
-                save_state(status="heartbeat" if ok else "heartbeat_failed", worker_id=worker, heartbeat_ok=ok, heartbeat_at=time.time())
-                next_heartbeat = now + heartbeat_seconds
-            recovered, guarded = recover_stale(c, worker)
-            if recovered or guarded: save_state(status="recovery_scan", worker_id=worker, recovered=recovered, guarded=guarded)
-            cmd = claim(c, worker)
-            if cmd:
-                task_id = str(cmd.get("task_id") or "")
-                if not task_id: raise ValueError("claimed command has no task_id")
-                target = INBOX / f"{task_id}.json"
-                if target.exists() or (OUTBOX / f"{task_id}.json").exists() or (INBOX / f"{task_id}.running").exists(): raise ValueError(f"duplicate task_id: {task_id}")
-                local_command = dict(cmd.get("command") or {})
-                local_command["task_id"] = task_id
-                target.write_text(json.dumps(local_command, ensure_ascii=False), encoding="utf-8")
-                save_state(status="waiting_result", worker_id=worker, task_id=task_id)
-                deadline = time.monotonic() + 300
-                heartbeat_at = 0.0
-                while time.monotonic() < deadline:
-                    result_file = OUTBOX / f"{task_id}.json"
-                    if result_file.exists():
-                        result = json.loads(result_file.read_text(encoding="utf-8"))
-                        accepted = submit_result(c, worker, task_id, result, cmd.get("lease_token"))
-                        if not accepted:
-                            result_file.unlink(missing_ok=True)
-                            save_state(status="stale_result_discarded", worker_id=worker, task_id=task_id)
-                        else:
-                            save_state(status="idle", worker_id=worker, task_id=task_id)
-                        break
-                    now = time.monotonic()
-                    if now >= heartbeat_at:
-                        qh = urllib.parse.urlencode({"id": "eq." + str(cmd["id"]), "status": "eq.claimed", "worker_id": "eq." + worker, "lease_token": "eq." + str(cmd.get("lease_token") or "")})
-                        request("PATCH", "/hands_commands?" + qh, {"claimed_at": datetime.now(timezone.utc).isoformat()})
-                        heartbeat_at = now + max(5.0, min(30.0, float(c.get("heartbeat_seconds") or 15)))
-                    now = time.monotonic()
-                    if now >= next_heartbeat:
-                        ok = heartbeat(c, worker)
-                        save_state(heartbeat_ok=ok, heartbeat_at=time.time())
-                        next_heartbeat = now + heartbeat_seconds
-                    time.sleep(0.5)
-                else:
-                    submit_result(c, worker, task_id, {"task_id": task_id, "status": "timeout_waiting_result"}, cmd.get("lease_token"), "local result timeout")
-                    save_state(status="idle", worker_id=worker, task_id=task_id)
-            else:
-                save_state(status="idle", worker_id=worker)
+            now=time.monotonic()
+            if now>=next_heartbeat:
+                ok=heartbeat(c,worker)
+                save_state(status="heartbeat" if ok else "heartbeat_failed",worker_id=worker,
+                           heartbeat_ok=ok,heartbeat_at=time.time(),
+                           max_parallel_commands=limit,active_count=len(active),active_tasks=sorted(active))
+                next_heartbeat=now+heartbeat_seconds
+
+            recovered,guarded=recover_stale(c,worker)
+            if recovered or guarded:
+                save_state(status="recovery_scan",worker_id=worker,recovered=recovered,guarded=guarded,
+                           max_parallel_commands=limit,active_count=len(active),active_tasks=sorted(active))
+
+            for task_id,meta in list(active.items()):
+                result_file=OUTBOX/f"{task_id}.json"
+                if result_file.exists():
+                    result=json.loads(result_file.read_text(encoding="utf-8"))
+                    accepted=submit_result(c,worker,task_id,result,meta["lease_token"])
+                    if not accepted:
+                        result_file.unlink(missing_ok=True)
+                        save_state(status="stale_result_discarded",worker_id=worker,task_id=task_id)
+                    active.pop(task_id,None)
+                    continue
+
+                now=time.monotonic()
+                if now>=meta["deadline"]:
+                    submit_result(c,worker,task_id,
+                                  {"task_id":task_id,"status":"timeout_waiting_result"},
+                                  meta["lease_token"],"local result timeout")
+                    active.pop(task_id,None)
+                    continue
+
+                if now>=meta["lease_refresh_at"]:
+                    refresh_lease(worker,meta)
+                    meta["lease_refresh_at"]=now+lease_interval
+
+            while len(active)<limit:
+                cmd=claim(c,worker)
+                if not cmd:
+                    break
+                task_id=dispatch_claimed(cmd)
+                active[task_id]=active_entry(cmd)
+
+            save_state(status="busy" if active else "idle",worker_id=worker,
+                       heartbeat_ok=True,max_parallel_commands=limit,
+                       active_count=len(active),active_tasks=sorted(active))
         except Exception as e:
-            save_state(status="error", worker_id=worker, error=f"{type(e).__name__}: {e}")
+            save_state(status="error",worker_id=worker,error=f"{type(e).__name__}: {e}",
+                       max_parallel_commands=limit,active_count=len(active),active_tasks=sorted(active))
         time.sleep(poll)
 
 if __name__ == "__main__": main()
