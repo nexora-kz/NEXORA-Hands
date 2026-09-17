@@ -168,7 +168,7 @@ while p.poll() is None:
  time.sleep(0.1)
 m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent=2),encoding='utf-8'); out.close(); err.close()
 '''
-        runner_path.write_text(runner,encoding="utf-8"); p=subprocess.Popen(["C:\\Python314\\python.exe",str(runner_path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        runner_path.write_text(runner,encoding="utf-8"); p=subprocess.Popen([sys.executable,str(runner_path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         return {"session_id":sid,"pid":p.pid,"command":args,"started":True}
     if op=="session_send":
         sid=str(c["session_id"]); p=PROCESS_DIR/f"{sid}.input"
@@ -199,7 +199,7 @@ while p.poll() is None:
  time.sleep(0.1)
 m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent=2),encoding='utf-8'); out.close(); err.close()
 '''
-        meta={"pid":"pending","command":args,"stdout":str(stdout_path),"stderr":str(stderr_path),"input":str(input_path),"started_at":time.time()}; input_path.write_text("",encoding="utf-8"); meta_path.write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8"); runner_path.write_text(runner,encoding="utf-8"); p=subprocess.Popen(["C:\\Python314\\python.exe",str(runner_path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); return {"pid":p.pid,"command":args,"started":True,"task_id":tid}
+        meta={"pid":"pending","command":args,"stdout":str(stdout_path),"stderr":str(stderr_path),"input":str(input_path),"started_at":time.time()}; input_path.write_text("",encoding="utf-8"); meta_path.write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8"); runner_path.write_text(runner,encoding="utf-8"); p=subprocess.Popen([sys.executable,str(runner_path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); return {"pid":p.pid,"command":args,"started":True,"task_id":tid}
     if op=="process_wait":
         pid=int(c["pid"]); timeout=max(1,int(c.get("timeout_seconds") or 30)); deadline=time.time()+timeout; meta=None
         for mf in PROCESS_DIR.glob("*.json"):
