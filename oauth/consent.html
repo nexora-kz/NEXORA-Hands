@@ -1,130 +1,43 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>NEXORA Hands — разрешение доступа</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:680px;margin:60px auto;padding:0 20px;background:#111;color:#eee}
-    .card{background:#1b1b1b;border:1px solid #333;border-radius:14px;padding:28px}
-    button,input{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #555;background:#222;color:#eee}
-    button{cursor:pointer;margin-right:8px} input{width:100%;box-sizing:border-box;margin:10px 0 14px}
-    .muted{color:#aaa}.error{color:#ff8a8a}.ok{color:#8fe39a}
-  </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEXORA Hands — разрешение доступа</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:680px;margin:60px auto;padding:0 20px;background:#111;color:#eee}.card{background:#1b1b1b;border:1px solid #333;border-radius:14px;padding:28px}button,input{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #555;background:#222;color:#eee}button{cursor:pointer;margin-right:8px}input{width:100%;box-sizing:border-box;margin:10px 0 14px}.muted{color:#aaa}.error{color:#ff8a8a}.ok{color:#8fe39a}</style>
 </head>
 <body>
-  <div class="card">
-    <h1>NEXORA Hands</h1>
-    <p id="status" class="muted">Проверка запроса OAuth…</p>
-    <div id="details"></div>
-    <div id="login" hidden>
-      <p>Для выдачи доступа требуется войти в Supabase.</p>
-      <input id="email" type="email" autocomplete="email" placeholder="Email">
-      <button id="send">Отправить ссылку входа</button>
-      <p id="loginStatus" class="muted"></p>
-    </div>
-    <div id="consent" hidden>
-      <button id="approve">Разрешить</button>
-      <button id="deny">Отклонить</button>
-    </div>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script>
-    const SUPABASE_URL = 'https://igeddbknrctsdufieosg.supabase.co'
-    const SUPABASE_KEY = 'sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2'
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
-    const params = new URLSearchParams(location.search)
-    const authorizationId = params.get('authorization_id')
-    const status = document.getElementById('status')
-    const details = document.getElementById('details')
-    const login = document.getElementById('login')
-    const consent = document.getElementById('consent')
-
-    function showError(message) {
-      status.textContent = message
-      status.className = 'error'
-    }
-
-    async function init() {
-      try {
-        if (!authorizationId) {
-          showError('Нет authorization_id.')
-          return
-        }
-
-        // Supabase's OAuth consent flow requires the user to be authenticated
-        // before retrieving the authorization details.
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
-        if (sessionError) {
-          showError('Не удалось проверить вход Supabase: ' + sessionError.message)
-          return
-        }
-
-        if (!sessionData.session) {
-          status.textContent = 'Требуется вход в Supabase.'
-          login.hidden = false
-          return
-        }
-
-        status.textContent = 'Получение данных OAuth-запроса…'
-        const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId)
-        if (error) {
-          showError('Не удалось получить данные OAuth-запроса: ' + error.message)
-          return
-        }
-        if (!data) {
-          showError('Supabase не вернул данные OAuth-запроса.')
-          return
-        }
-
-        details.innerHTML = '<p><b>Приложение:</b> ' + escapeHtml(data.client?.name || 'MCP-клиент') + '</p>' +
-          '<p><b>Разрешения:</b> ' + escapeHtml(data.scope || 'не указаны') + '</p>'
-
-        status.textContent = 'Проверьте запрашиваемый доступ и подтвердите его.'
-        consent.hidden = false
-      } catch (e) {
-        showError('Ошибка страницы OAuth: ' + (e?.message || String(e)))
-      }
-    }
-
-    document.getElementById('send').onclick = async () => {
-      try {
-        const email = document.getElementById('email').value.trim()
-        if (!email) return
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: { emailRedirectTo: location.href }
-        })
-        document.getElementById('loginStatus').textContent = error ? error.message : 'Ссылка входа отправлена на email.'
-        document.getElementById('loginStatus').className = error ? 'error' : 'ok'
-      } catch (e) {
-        document.getElementById('loginStatus').textContent = e?.message || String(e)
-        document.getElementById('loginStatus').className = 'error'
-      }
-    }
-
-    document.getElementById('approve').onclick = async () => {
-      try {
-        const { data, error } = await supabase.auth.oauth.approveAuthorization(authorizationId)
-        if (error) { showError(error.message); return }
-        location.href = data.redirect_url
-      } catch (e) { showError(e?.message || String(e)) }
-    }
-
-    document.getElementById('deny').onclick = async () => {
-      try {
-        const { data, error } = await supabase.auth.oauth.denyAuthorization(authorizationId)
-        if (error) { showError(error.message); return }
-        location.href = data.redirect_url
-      } catch (e) { showError(e?.message || String(e)) }
-    }
-
-    function escapeHtml(value) {
-      return String(value).replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]))
-    }
-
-    init()
-  </script>
-</body>
-</html>
+<div class="card">
+<h1>NEXORA Hands</h1>
+<p id="status" class="muted">Загрузка OAuth…</p>
+<div id="details"></div>
+<div id="login" hidden><p>Для выдачи доступа требуется войти в Supabase.</p><input id="email" type="email" autocomplete="email" placeholder="Email"><button id="send">Отправить ссылку входа</button><p id="loginStatus" class="muted"></p></div>
+<div id="consent" hidden><button id="approve">Разрешить</button><button id="deny">Отклонить</button></div>
+</div>
+<script type="module">
+try {
+ const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm')
+ const supabase=createClient('https://igeddbknrctsdufieosg.supabase.co','sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2')
+ const authorizationId=new URLSearchParams(location.search).get('authorization_id')
+ const status=document.getElementById('status'),details=document.getElementById('details'),login=document.getElementById('login'),consent=document.getElementById('consent')
+ const errorText=e=>'Ошибка OAuth: '+(e?.message||String(e))
+ if(!authorizationId){status.textContent='Нет authorization_id.';status.className='error'}
+ else {
+  status.textContent='Проверка входа…'
+  const {data:sessionData,error:sessionError}=await supabase.auth.getSession()
+  if(sessionError){status.textContent=errorText(sessionError);status.className='error'}
+  else if(!sessionData.session){status.textContent='Требуется вход в Supabase.';login.hidden=false}
+  else {
+   status.textContent='Получение данных OAuth-запроса…'
+   const {data,error}=await supabase.auth.oauth.getAuthorizationDetails(authorizationId)
+   if(error||!data){status.textContent=errorText(error||new Error('OAuth details отсутствуют'));status.className='error'}
+   else if(!('authorization_id' in data)&&data.redirect_url){location.href=data.redirect_url}
+   else {details.innerHTML='<p><b>Приложение:</b> '+escapeHtml(data.client?.name||'MCP-клиент')+'</p><p><b>Разрешения:</b> '+escapeHtml(data.scope||'не указаны')+'</p>';status.textContent='Проверьте запрашиваемый доступ и подтвердите его.';consent.hidden=false}
+  }
+ }
+ document.getElementById('send').onclick=async()=>{try{const email=document.getElementById('email').value.trim();if(!email)return;const {error}=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:location.href}});document.getElementById('loginStatus').textContent=error?error.message:'Ссылка входа отправлена на email.';document.getElementById('loginStatus').className=error?'error':'ok'}catch(e){document.getElementById('loginStatus').textContent=errorText(e);document.getElementById('loginStatus').className='error'}}
+ document.getElementById('approve').onclick=async()=>{try{const {data,error}=await supabase.auth.oauth.approveAuthorization(authorizationId);if(error)throw error;location.href=data.redirect_url}catch(e){status.textContent=errorText(e);status.className='error'}}
+ document.getElementById('deny').onclick=async()=>{try{const {data,error}=await supabase.auth.oauth.denyAuthorization(authorizationId);if(error)throw error;location.href=data.redirect_url}catch(e){status.textContent=errorText(e);status.className='error'}}
+ function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+} catch(e) { const s=document.getElementById('status'); s.textContent='Ошибка загрузки OAuth SDK: '+(e?.message||String(e)); s.className='error' }
+</script>
+</body></html>
