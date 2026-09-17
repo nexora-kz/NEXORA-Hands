@@ -1,0 +1,40 @@
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+
+Write-Host '============================================================'
+Write-Host '                 NEXORA HANDS'
+Write-Host '============================================================'
+Write-Host '[BOOT] NEXORA Hands remote bootstrap starting...'
+
+function Refresh-Path {
+    $machine = [Environment]::GetEnvironmentVariable('Path','Machine')
+    $user = [Environment]::GetEnvironmentVariable('Path','User')
+    $env:Path = "$machine;$user"
+}
+
+function Find-CommandPath([string]$Name) {
+    Refresh-Path
+    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+$node = Find-CommandPath 'node.exe'
+if (-not $node) {
+    Write-Host '[BOOT] Node.js not found. Installing Node.js LTS...'
+    $winget = Find-CommandPath 'winget.exe'
+    if (-not $winget) { throw 'Windows Package Manager (winget) is required for automatic Node.js installation.' }
+    & $winget install --id OpenJS.NodeJS.LTS --exact --accept-source-agreements --accept-package-agreements
+    Refresh-Path
+    $node = Find-CommandPath 'node.exe'
+}
+
+if (-not $node) { throw 'Node.js LTS installation completed but node.exe was not found.' }
+Write-Host "[BOOT] Node.js ready: $(& $node --version)"
+
+$npx = Find-CommandPath 'npx.cmd'
+if (-not $npx) { throw 'npx.cmd was not found after Node.js installation.' }
+
+Write-Host '[BOOT] Starting NEXORA Hands from npm...' -ForegroundColor Cyan
+& $npx --yes nexora-hands@latest remote
+exit $LASTEXITCODE
