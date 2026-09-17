@@ -200,6 +200,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         if not mp.exists(): raise FileNotFoundError(str(mp))
         m=json.loads(mp.read_text(encoding="utf-8")); ids=[int(x) for x in (m.get("pid"),m.get("child_pid")) if str(x).isdigit()]
         for tid in ids: subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",f"Stop-Process -Id {tid} -Force -ErrorAction SilentlyContinue"],capture_output=True,timeout=15)
+        mp.unlink(missing_ok=True)
         return {"session_id":sid,"stopped":True,"pids":ids}
     if op=="process_start":
         command=c.get("command");
