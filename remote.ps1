@@ -36,13 +36,13 @@ try {
     $dataRoot = Join-Path $runtimeRoot 'data'
     $appRoot = Join-Path $runtimeRoot 'app'
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
-    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/main'
+    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/e87d40e'
     $files = @(
-        @{Url="$rawBase/start.ps1?v=3c2292d";Path=(Join-Path $runtimeRoot 'start.ps1')},
-        @{Url="$rawBase/stop.ps1?v=3c2292d";Path=(Join-Path $runtimeRoot 'stop.ps1')},
-        @{Url="$rawBase/app/hands.py?v=3c2292d";Path=(Join-Path $appRoot 'hands.py')},
-        @{Url="$rawBase/app/supabase_channel.py?v=3c2292d";Path=(Join-Path $appRoot 'supabase_channel.py')},
-        @{Url="$rawBase/app/hands_supabase_config.json?v=3c2292d";Path=(Join-Path $appRoot 'hands_supabase_config.json')}
+        @{Url="$rawBase/start.ps1";Path=(Join-Path $runtimeRoot 'start.ps1')},
+        @{Url="$rawBase/stop.ps1";Path=(Join-Path $runtimeRoot 'stop.ps1')},
+        @{Url="$rawBase/app/hands.py";Path=(Join-Path $appRoot 'hands.py')},
+        @{Url="$rawBase/app/supabase_channel.py";Path=(Join-Path $appRoot 'supabase_channel.py')},
+        @{Url="$rawBase/app/hands_supabase_config.json";Path=(Join-Path $appRoot 'hands_supabase_config.json')}
     )
     foreach ($file in $files) {
         $tmp = "$($file.Path).download"
