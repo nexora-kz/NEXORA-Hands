@@ -4,8 +4,9 @@ $Data = Join-Path $Root 'data'
 $App = Join-Path $Root 'app'
 $Log = Join-Path $Data 'logs'
 New-Item -ItemType Directory -Force -Path $Log | Out-Null
+New-Item -ItemType Directory -Force -Path $App | Out-Null
 
-# Refresh PATH so a Python installation made by winget in the previous step is visible.
+# Refresh PATH so a Python installation made by the launcher is visible.
 $machinePath = [Environment]::GetEnvironmentVariable('Path','Machine')
 $userPath = [Environment]::GetEnvironmentVariable('Path','User')
 $env:Path = "$machinePath;$userPath"
@@ -13,7 +14,13 @@ $env:Path = "$machinePath;$userPath"
 # First-run runtime identity: each PC gets its own persistent worker_id.
 $RuntimeConfig = Join-Path $Data 'hands_supabase_config.json'
 $TemplateConfig = Join-Path $App 'hands_supabase_config.json'
-if (-not (Test-Path $RuntimeConfig)) { Copy-Item $TemplateConfig $RuntimeConfig -Force }
+if (-not (Test-Path $RuntimeConfig)) {
+    if (-not (Test-Path $TemplateConfig)) {
+        Write-Host '[ERROR] Missing Hands runtime template config.' -ForegroundColor Red
+        exit 1
+    }
+    Copy-Item $TemplateConfig $RuntimeConfig -Force
+}
 try {
     $cfg = Get-Content $RuntimeConfig -Raw | ConvertFrom-Json
     if ($null -eq $cfg.worker_id) { $cfg | Add-Member -NotePropertyName worker_id -NotePropertyValue '' -Force }
@@ -30,6 +37,34 @@ Write-Host '                 NEXORA HANDS' -ForegroundColor Cyan
 Write-Host '============================================================' -ForegroundColor Cyan
 Write-Host '[BOOT] Starting local execution agent...' -ForegroundColor Gray
 
+# Always refresh the two executable app files from the public repository.
+# This prevents a stale local worker from surviving future launcher runs.
+$RepoBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/main/app'
+$Hands = Join-Path $App 'hands.py'
+$Channel = Join-Path $App 'supabase_channel.py'
+$HandsTmp = "$Hands.download"
+$ChannelTmp = "$Channel.download"
+try {
+    Write-Host '[UPDATE] Checking current Hands worker...' -ForegroundColor Yellow
+    Invoke-WebRequest -Uri "$RepoBase/hands.py" -OutFile $HandsTmp -UseBasicParsing
+    if ((Get-Item $HandsTmp).Length -lt 1000) { throw 'Downloaded hands.py is unexpectedly small.' }
+    Move-Item $HandsTmp $Hands -Force
+    Write-Host '[UPDATE] hands.py refreshed.' -ForegroundColor Green
+
+    Write-Host '[UPDATE] Checking current Supabase channel...' -ForegroundColor Yellow
+    Invoke-WebRequest -Uri "$RepoBase/supabase_channel.py" -OutFile $ChannelTmp -UseBasicParsing
+    if ((Get-Item $ChannelTmp).Length -lt 1000) { throw 'Downloaded supabase_channel.py is unexpectedly small.' }
+    Move-Item $ChannelTmp $Channel -Force
+    Write-Host '[UPDATE] supabase_channel.py refreshed.' -ForegroundColor Green
+} catch {
+    Remove-Item $HandsTmp,$ChannelTmp -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path $Hands) -or -not (Test-Path $Channel)) {
+        Write-Host "[ERROR] Cannot obtain Hands runtime files: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[UPDATE] Refresh failed; keeping existing runtime files: $($_.Exception.Message)" -ForegroundColor DarkYellow
+}
+
 $Python = $null
 $PythonArgs = @()
 try { & python --version *> $null; if ($LASTEXITCODE -eq 0) { $Python='python' } } catch {}
@@ -42,8 +77,6 @@ if (-not $Python) {
 }
 
 Write-Host "[BOOT] Python: $Python" -ForegroundColor DarkGray
-$Hands = Join-Path $App 'hands.py'
-$Channel = Join-Path $App 'supabase_channel.py'
 $HandsOut = Join-Path $Log 'hands.stdout.log'
 $HandsErr = Join-Path $Log 'hands.stderr.log'
 $ChannelOut = Join-Path $Log 'channel.stdout.log'
