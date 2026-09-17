@@ -188,7 +188,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
     if op=="process_start":
         command=c.get("command");
         if not command: raise ValueError("process_start command is empty")
-        args=command if isinstance(command,list) else [str(command)]; tid=str(c.get("task_id") or uuid.uuid4())
+        args=command if isinstance(command,list) else ["powershell.exe","-NoProfile","-NonInteractive","-Command",str(command)]; tid=str(c.get("task_id") or uuid.uuid4())
         stdout_path=PROCESS_DIR/f"{tid}.stdout"; stderr_path=PROCESS_DIR/f"{tid}.stderr"; input_path=PROCESS_DIR/f"{tid}.input"; meta_path=PROCESS_DIR/f"{tid}.json"; runner_path=PROCESS_DIR/f"{tid}.runner.py"
         runner=f'''import json,subprocess,os,time
 from pathlib import Path
