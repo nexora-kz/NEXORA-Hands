@@ -1,10 +1,10 @@
 # NEXORA Hands
 
-Standalone Windows execution layer for NEXORA.
+Standalone Windows remote-control software for NEXORA.
 
 ## Working flow
 
-**Launch page → NEXORA-Hands.cmd → automatic runtime setup → NEXORA Hands → ChatGPT/NEXORA transport → Windows PC**
+**Launch page → NEXORA-Hands.cmd → automatic runtime setup → NEXORA Hands → NEXORA control plane → Windows PC**
 
 The end-user does not need Git or Remote Desktop Commander.
 
@@ -17,22 +17,18 @@ The end-user does not need Git or Remote Desktop Commander.
 5. NEXORA Hands starts and registers this PC as a worker through the NEXORA transport.
 6. The same PowerShell window remains the live local runtime console.
 
-Node.js LTS and Python are installed automatically when they are missing. Git is not required.
+Node.js and Python are installed automatically when they are missing. Git is not required.
 
-The worker receives commands through the NEXORA transport and executes them locally on Windows.
+The worker receives commands through the NEXORA control plane and executes them locally on Windows.
 
-## Direct ChatGPT control
+## Control Center
 
-NEXORA Hands now exposes a dedicated remote MCP control endpoint backed by the existing Supabase Hands control layer. The endpoint provides:
+`control.html` is the browser-based NEXORA Hands Control Center. It discovers registered Hands workers, lets the operator select a PC, sends supported Hands operations, and displays execution results.
 
-- `hands_list_workers` — discover registered Hands PCs.
-- `hands_execute` — send a supported Hands operation to a selected PC.
-- `hands_command_status` — read execution status and result.
+The Control Center uses the existing Supabase-backed Hands control layer. It does not use OpenAI, ChatGPT, MCP, Remote Desktop Commander, or a fourth worker transport.
 
-The MCP endpoint is deployed as the `nexora-hands-mcp` Supabase Edge Function. It does not create a fourth transport: it is a control interface on top of the existing Hands/Supabase path.
+## Architecture
 
-The intended architecture is:
+**Control Center → Hands control API → Supabase Hands control layer → Hands worker → Windows PC**
 
-**ChatGPT → NEXORA Hands MCP → existing Hands control API → Supabase → Hands worker → Windows PC**
-
-The local worker and launcher remain unchanged.
+The worker and launcher are standalone components and do not depend on OpenAI services.
