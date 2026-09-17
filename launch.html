@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,11 +7,19 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>NEXORA Hands</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 680px; margin: 60px auto; padding: 0 20px; }
+    button { padding: 12px 18px; font-size: 16px; cursor: pointer; }
+    .step { margin: 12px 0; }
+    #status { margin-top: 18px; }
+  </style>
 </head>
 <body>
   <h2>NEXORA Hands</h2>
-  <p>Click the button once. Your browser will download <b>NEXORA-Hands.cmd</b>.</p>
-  <p><button id="download" type="button">DOWNLOAD NEXORA HANDS</button></p>
+  <div class="step">1. Нажмите кнопку.</div>
+  <div class="step">2. Запустите скачанный <b>NEXORA-Hands.cmd</b>.</div>
+  <div class="step">3. Оставьте открытым окно PowerShell — в нём будет работать Hands.</div>
+  <p><button id="download" type="button">СКАЧАТЬ NEXORA HANDS</button></p>
   <p id="status"></p>
   <script>
     const cmd = String.raw`@echo off
@@ -34,7 +42,7 @@ if errorlevel 1 (
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      document.getElementById('status').textContent = 'Download started: NEXORA-Hands.cmd';
+      document.getElementById('status').textContent = 'NEXORA-Hands.cmd скачивается.';
     };
   </script>
 </body>
