@@ -44,12 +44,28 @@ $HandsOut = Join-Path $Log 'hands.stdout.log'
 $HandsErr = Join-Path $Log 'hands.stderr.log'
 $ChannelOut = Join-Path $Log 'channel.stdout.log'
 $ChannelErr = Join-Path $Log 'channel.stderr.log'
-function Test-ExactPythonScript([string]$Path) {
-    $needle = [IO.Path]::GetFullPath($Path).ToLowerInvariant()
-    @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -match '^python(w)?\.exe$' -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle)
-    }).Count -gt 0
+$HostMutex = New-Object System.Threading.Mutex($false, 'Local\NEXORA.Hands.Host')
+$OwnsHostMutex = $false
+try {
+    $OwnsHostMutex = $HostMutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+    $OwnsHostMutex = $true
 }
+if (-not $OwnsHostMutex) {
+    Write-Host 'NEXORA Hands - already connected.'
+    exit 0
+}
+function Stop-ExactPythonScript([string]$Path) {
+    $needle = [IO.Path]::GetFullPath($Path).ToLowerInvariant()
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -match '^python(w)?\.exe$' -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle)
+    } | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+Stop-ExactPythonScript $Hands
+Stop-ExactPythonScript $Channel
+Start-Sleep -Milliseconds 300
 $handsProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -NoNewWindow -PassThru
 $channelProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru
 $statePath = Join-Path $Data 'supabase_channel_state.json'
@@ -69,4 +85,6 @@ try {
 } finally {
     if ($handsProc) { Stop-Process -Id $handsProc.Id -Force -ErrorAction SilentlyContinue }
     if ($channelProc) { Stop-Process -Id $channelProc.Id -Force -ErrorAction SilentlyContinue }
+    if ($OwnsHostMutex) { try { $HostMutex.ReleaseMutex() } catch {} }
+    if ($HostMutex) { $HostMutex.Dispose() }
 }
