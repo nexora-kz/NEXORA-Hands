@@ -4,58 +4,23 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NEXORA Hands Control Center</title>
 <style>
-body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee}main{max-width:1100px;margin:24px auto;padding:0 16px}button,input,textarea,select{font:inherit;background:#1d1d1d;color:#eee;border:1px solid #444;border-radius:6px;padding:9px}button{cursor:pointer}.bar,.grid{display:flex;gap:10px;align-items:center}.grid{align-items:stretch}.panel{background:#181818;border:1px solid #333;border-radius:8px;padding:14px;margin-top:14px}.workers{width:330px;min-width:260px}.worker{padding:10px;border:1px solid #333;border-radius:6px;margin:7px 0;cursor:pointer}.worker.active{border-color:#aaa}.online{color:#8f8}.offline{color:#888}.terminal{flex:1}.terminal textarea{width:100%;box-sizing:border-box;height:180px;resize:vertical}.out{white-space:pre-wrap;background:#0b0b0b;border:1px solid #333;padding:10px;min-height:180px;overflow:auto}.muted{color:#999;font-size:13px}h1{font-size:22px}.hidden{display:none}.auth-email{flex:1}.danger{border-color:#744}
+body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee}main{max-width:1100px;margin:24px auto;padding:0 16px}button,input,textarea,select{font:inherit;background:#1d1d1d;color:#eee;border:1px solid #444;border-radius:6px;padding:9px}button{cursor:pointer}.bar,.grid{display:flex;gap:10px;align-items:center}.grid{align-items:stretch}.panel{background:#181818;border:1px solid #333;border-radius:8px;padding:14px;margin-top:14px}.workers{width:330px;min-width:260px}.worker{padding:10px;border:1px solid #333;border-radius:6px;margin:7px 0;cursor:pointer}.worker.active{border-color:#aaa}.online{color:#8f8}.offline{color:#888}.terminal{flex:1}.terminal textarea{width:100%;box-sizing:border-box;height:180px;resize:vertical}.out{white-space:pre-wrap;background:#0b0b0b;border:1px solid #333;padding:10px;min-height:180px;overflow:auto}.muted{color:#999;font-size:13px}h1{font-size:22px}
 </style>
 </head>
 <body><main>
 <h1>NEXORA Hands Control Center</h1>
-<div class="panel" id="loginPanel">
-  <div class="bar"><input id="email" class="auth-email" type="email" placeholder="E-mail для входа" autocomplete="email"><button onclick="signIn()">Получить ссылку</button></div>
-  <div id="auth" class="muted">Вход выполняется через Supabase Auth. После отправки ссылки откройте её из почты.</div>
-</div>
-<div class="panel hidden" id="sessionPanel">
-  <div class="bar"><span id="userEmail" class="auth-email"></span><button class="danger" onclick="signOut()">Выйти</button><button onclick="loadWorkers()">Обновить</button></div>
-  <div id="authSession" class="muted">Supabase Auth: авторизован.</div>
-</div>
+<div class="panel"><div class="bar"><input id="token" type="password" placeholder="Control token" style="flex:1"><button onclick="loadWorkers()">Подключить</button></div><div id="auth" class="muted">Токен используется только из браузера и не хранится на сервере.</div></div>
 <div class="grid">
-<section class="panel workers"><b>ПК</b><div id="workers" class="muted">Выполните вход</div></section>
+<section class="panel workers"><b>ПК</b><div id="workers" class="muted">Нет данных</div></section>
 <section class="panel terminal"><div><b id="selected">ПК не выбран</b></div><p><input id="command" value="Get-ComputerInfo | Select-Object CsName,WindowsVersion | Out-String" style="width:100%;box-sizing:border-box"></p><button onclick="runCommand()">Выполнить PowerShell</button> <button onclick="listFiles()">C:\</button><div id="status" class="muted"></div><h3>Результат</h3><div id="output" class="out"></div></section>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-const SUPABASE_URL='https://igeddbknrctsdufieosg.supabase.co';
-const SUPABASE_KEY='sb_publishable_KNdHeNNDpSc8VhLDgHvAxA_lexRi8y2';
-const API=SUPABASE_URL+'/functions/v1/nexora-hands-control-v2';
-const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const API='https://igeddbknrctsdufieosg.supabase.co/functions/v1/nexora-hands-control';
 let selected=null;
-
-async function signIn(){
-  const email=document.getElementById('email').value.trim();
-  if(!email)return setAuth('Введите e-mail.');
-  setAuth('Отправка ссылки для входа...');
-  const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:location.href}});
-  if(error)return setAuth(error.message);
-  setAuth('Ссылка для входа отправлена на '+email+'.');
-}
-async function signOut(){await sb.auth.signOut();selected=null;document.getElementById('selected').textContent='ПК не выбран';setSession(null)}
-function setAuth(text){document.getElementById('auth').textContent=text}
-function setSession(user){
-  const login=document.getElementById('loginPanel');const session=document.getElementById('sessionPanel');
-  if(user){login.classList.add('hidden');session.classList.remove('hidden');document.getElementById('userEmail').textContent=user.email||'Авторизованный пользователь';document.getElementById('workers').textContent='Загрузка...';loadWorkers()}
-  else{login.classList.remove('hidden');session.classList.add('hidden');document.getElementById('workers').textContent='Выполните вход'}
-}
-async function api(action,extra={}){
-  const {data:{session}}=await sb.auth.getSession();
-  if(!session?.access_token)throw new Error('Сессия Supabase Auth отсутствует. Войдите снова.');
-  const r=await fetch(API,{method:'POST',headers:{'content-type':'application/json','Authorization':'Bearer '+session.access_token},body:JSON.stringify({action,...extra})});
-  const j=await r.json().catch(()=>({error:'invalid response'}));
-  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j
-}
-async function loadWorkers(){try{const j=await api('list_workers');const box=document.getElementById('workers');box.innerHTML='';for(const w of j.workers){const d=document.createElement('div');d.className='worker'+(selected===w.worker_id?' active':'');const online=w.last_seen_at&&((Date.now()-Date.parse(w.last_seen_at))<90000);d.innerHTML='<b>'+esc(w.worker_id)+'</b><br><span class="'+(online?'online':'offline')+'">'+(online?'ONLINE':'OFFLINE')+'</span><br><span class="muted">'+esc(w.last_seen_at||'нет heartbeat')+'</span>';d.onclick=()=>{selected=w.worker_id;document.getElementById('selected').textContent=w.worker_id;loadWorkers()};box.appendChild(d)}if(!j.workers.length)box.textContent='Нет зарегистрированных ПК';document.getElementById('authSession').textContent='Supabase Auth: авторизован.'}catch(e){document.getElementById('authSession').textContent=e.message;document.getElementById('workers').textContent='Нет данных'}}
-async function runCommand(){if(!selected)return alert('Выберите ПК');const task='cc-'+Date.now()+'-'+Math.random().toString(16).slice(2);document.getElementById('status').textContent='Отправка '+task+'...';document.getElementById('output').textContent='';try{await api('command',{task_id:task,worker_id:selected,command:{operation:'shell',command:document.getElementById('command').value}});for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,1000));const j=await api('status',{task_id:task});const s=j.status||{};if(s.command?.status==='completed'||s.command?.status==='error'||s.result){document.getElementById('output').textContent=JSON.stringify(s,null,2);document.getElementById('status').textContent='Завершено';return}}document.getElementById('status').textContent='Ожидание результата >60с'}catch(e){document.getElementById('output').textContent=e.message;document.getElementById('status').textContent='Ошибка'}}
+function tok(){return document.getElementById('token').value.trim()}
+async function api(action,extra={}){const r=await fetch(API,{method:'POST',headers:{'content-type':'application/json','x-nexora-control-token':tok()},body:JSON.stringify({action,...extra})});const j=await r.json().catch(()=>({error:'invalid response'}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
+async function loadWorkers(){try{const j=await api('list_workers');const box=document.getElementById('workers');box.innerHTML='';for(const w of j.workers){const d=document.createElement('div');d.className='worker'+(selected===w.worker_id?' active':'');const online=w.last_seen_at&&((Date.now()-Date.parse(w.last_seen_at))<90000);d.innerHTML='<b>'+esc(w.worker_id)+'</b><br><span class="'+(online?'online':'offline')+'">'+(online?'ONLINE':'OFFLINE')+'</span><br><span class="muted">'+esc(w.last_seen_at||'нет heartbeat')+'</span>';d.onclick=()=>{selected=w.worker_id;document.getElementById('selected').textContent=w.worker_id;loadWorkers()};box.appendChild(d)}if(!j.workers.length)box.textContent='Нет зарегистрированных ПК'}catch(e){document.getElementById('auth').textContent=e.message}}
+async function runCommand(){if(!selected)return alert('Выберите ПК');const task='cc-'+Date.now()+'-'+Math.random().toString(16).slice(2);document.getElementById('status').textContent='Отправка '+task+'...';try{await api('command',{task_id:task,worker_id:selected,command:{operation:'shell',command:document.getElementById('command').value}});for(let i=0;i<40;i++){await new Promise(r=>setTimeout(r,1000));const j=await api('status',{task_id:task});const s=j.status||{};if(s.status==='completed'||s.status==='error'){document.getElementById('output').textContent=JSON.stringify(s,null,2);document.getElementById('status').textContent='Завершено';return}}document.getElementById('status').textContent='Ожидание результата >40с'}catch(e){document.getElementById('output').textContent=e.message;document.getElementById('status').textContent='Ошибка'}}
 function listFiles(){document.getElementById('command').value='Get-ChildItem C:\\ | Select-Object Name,Length,Mode | Format-Table -AutoSize | Out-String';runCommand()}
 function esc(s){return String(s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]))}
-
-sb.auth.onAuthStateChange((_event,session)=>setSession(session?.user||null));
-sb.auth.getSession().then(({data:{session}})=>setSession(session?.user||null));
 </script></main></body></html>
