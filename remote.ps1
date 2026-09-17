@@ -12,6 +12,9 @@ if(-not $node){throw 'Node.js LTS installation completed but node.exe was not fo
 Write-Host "[BOOT] Node.js ready: $(& $node --version)"
 $npx=Find-CommandPath 'npx.cmd'
 if(-not $npx){throw 'npx.cmd was not found after Node.js installation.'}
+$cache=Join-Path $env:TEMP ("NEXORA-Hands-npm-cache-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $cache | Out-Null
+$env:npm_config_cache=$cache
+Write-Host "[BOOT] Isolated npm cache: $cache"
 Write-Host '[BOOT] Starting NEXORA Hands from GitHub...' -ForegroundColor Cyan
-& $npx --yes github:nexora-kz/NEXORA-Hands remote
-exit $LASTEXITCODE
+try { & $npx --yes github:nexora-kz/NEXORA-Hands remote; exit $LASTEXITCODE } finally { Remove-Item -LiteralPath $cache -Recurse -Force -ErrorAction SilentlyContinue }
