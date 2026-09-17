@@ -49,7 +49,11 @@ def execute(c):
     if op=="list_directory":
         p=Path(str(c.get("path") or ".")).resolve(); return {"path":str(p),"items":[{"name":x.name,"directory":x.is_dir(),"size":x.stat().st_size if x.is_file() else None} for x in p.iterdir()]}
     if op=="delete":
-        p=Path(str(c["path"])).resolve(); p.rmdir() if p.is_dir() else p.unlink(); return {"path":str(p),"deleted":True}
+        p=Path(str(c["path"])).resolve()
+        if p.is_dir():
+            shutil.rmtree(p) if bool(c.get("recursive")) else p.rmdir()
+        else: p.unlink()
+        return {"path":str(p),"deleted":True}
     if op=="mkdir":
         p=Path(str(c["path"])).resolve(); p.mkdir(parents=True,exist_ok=True); return {"path":str(p),"created":True}
     if op=="copy":
