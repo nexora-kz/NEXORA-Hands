@@ -9,7 +9,9 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
     server.registerTool('hands_list_workers', { title: 'List NEXORA Hands workers', description: 'List enabled Windows PCs registered with NEXORA Hands for the authenticated user.', inputSchema: {} }, async () => {
       const { data, error } = await supabase.rpc('hands_mcp_list_workers')
       if (error) throw new Error(error.message)
-      return { content: [{ type: 'text', text: JSON.stringify(data || []) }], structuredContent: { workers: data || [] } }
+      const cutoff = Date.now() - 90_000
+      const workers = (data || []).filter((w: any) => w?.enabled !== false && w?.last_seen_at && Date.parse(w.last_seen_at) >= cutoff)
+      return { content: [{ type: 'text', text: JSON.stringify(workers) }], structuredContent: { workers } }
     })
     server.registerTool('hands_execute', { title: 'Execute on NEXORA Hands PC', description: 'Execute any operation supported by the NEXORA Hands worker on a selected Windows PC.', inputSchema: { worker_id: z.string().min(1), command: z.record(z.string(), z.any()), timeout_seconds: z.number().int().min(5).max(600).optional() } }, async ({ worker_id, command, timeout_seconds }) => {
       const task_id = `hands-mcp-${crypto.randomUUID()}`
