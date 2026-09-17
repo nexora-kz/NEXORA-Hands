@@ -19,9 +19,8 @@ try {
   Expand-Archive -LiteralPath $zip -DestinationPath $work -Force
   $root=Join-Path $work 'NEXORA-Hands-main'
   if(-not (Test-Path (Join-Path $root 'package.json'))){throw 'Downloaded NEXORA Hands package is incomplete.'}
-  Write-Host '[BOOT] Starting NEXORA Hands without requiring Git...'
-  $nexora=Join-Path $root 'bin\nexora-hands.js'
-  & $node $nexora 'remote'
+  Write-Host '[BOOT] Starting NEXORA Hands in this PowerShell console...'
+  & (Join-Path $root 'start.ps1')
   exit $LASTEXITCODE
 } finally {
   Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
