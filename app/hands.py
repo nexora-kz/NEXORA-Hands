@@ -4,6 +4,7 @@ import platform
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
