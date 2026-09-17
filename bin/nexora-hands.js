@@ -11,14 +11,33 @@ function run(command, args) {
   return spawnSync(command, args, { stdio: 'inherit', shell: false });
 }
 
-function hasPython() {
-  const r = run('py', ['-3.14', '--version']);
+function refreshPath() {
+  const machine = process.env.Path || process.env.PATH || '';
+  const user = process.env.Path || process.env.PATH || '';
+  process.env.Path = `${machine};${user}`;
+}
+
+function hasUsablePython() {
+  let r = run('python', ['--version']);
+  if (r.status === 0) return true;
+  r = run('py', ['--version']);
   return r.status === 0;
 }
 
 function installPython() {
-  console.log('[BOOT] Python 3.14 not found. Installing with Windows Package Manager...');
-  const r = run('winget', ['install', '--id', 'Python.Python.3.14', '--exact', '--accept-source-agreements', '--accept-package-agreements']);
+  console.log('[BOOT] Python not found. Installing Python automatically...');
+  const wingetArgs = [
+    'install', '--id', 'Python.Python.3.13', '--exact', '--source', 'winget',
+    '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity'
+  ];
+  let r = run('winget', wingetArgs);
+  if (r.status === 0) return true;
+
+  console.log('[BOOT] Python 3.13 install failed. Trying Python 3.14...');
+  r = run('winget', [
+    'install', '--id', 'Python.Python.3.14', '--exact', '--source', 'winget',
+    '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity'
+  ]);
   return r.status === 0;
 }
 
@@ -32,8 +51,15 @@ if (mode !== 'remote') {
   process.exit(2);
 }
 
-if (!hasPython() && !installPython()) {
-  console.error('[ERROR] Python 3.14 could not be installed automatically.');
+if (!hasUsablePython() && !installPython()) {
+  console.error('[ERROR] Python could not be installed automatically.');
+  console.error('[ERROR] Windows Package Manager (winget) did not install a usable Python runtime.');
+  process.exit(1);
+}
+
+refreshPath();
+if (!hasUsablePython()) {
+  console.error('[ERROR] Python installation finished, but Python is not available in this process.');
   process.exit(1);
 }
 
