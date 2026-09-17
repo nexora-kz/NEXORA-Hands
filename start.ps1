@@ -50,12 +50,8 @@ function Test-ExactPythonScript([string]$Path) {
         $_.Name -match '^python(w)?\.exe$' -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle)
     }).Count -gt 0
 }
-if (-not (Test-ExactPythonScript $Hands)) {
-    Start-Process -FilePath $PythonPath -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -NoNewWindow | Out-Null
-}
-if (-not (Test-ExactPythonScript $Channel)) {
-    Start-Process -FilePath $PythonPath -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden | Out-Null
-}
+$handsProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -NoNewWindow -PassThru
+$channelProc = Start-Process -FilePath $PythonPath -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru
 $statePath = Join-Path $Data 'supabase_channel_state.json'
 $connected = $false
 for ($i=0; $i -lt 90; $i++) {
@@ -68,4 +64,9 @@ for ($i=0; $i -lt 90; $i++) {
     Start-Sleep -Seconds 1
 }
 if ($connected) { Write-Host 'NEXORA Hands - connected.' } else { Write-Host 'NEXORA Hands - connection failed.'; exit 1 }
-while ($true) { Start-Sleep -Seconds 5 }
+try {
+    while ($true) { Start-Sleep -Seconds 5 }
+} finally {
+    if ($handsProc) { Stop-Process -Id $handsProc.Id -Force -ErrorAction SilentlyContinue }
+    if ($channelProc) { Stop-Process -Id $channelProc.Id -Force -ErrorAction SilentlyContinue }
+}
