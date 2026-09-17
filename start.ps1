@@ -92,17 +92,17 @@ $channelProc = Find-PythonProcess 'supabase_channel.py'
 if ($handsProc) {
     Write-Host "[HANDS] Already running PID $($handsProc.ProcessId)" -ForegroundColor Green
 } else {
-    Write-Host '[HANDS] Starting hands.py...' -ForegroundColor Yellow
-    if ($Python -eq 'py') { $handsProc = Start-Process py -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -PassThru }
-    else { $handsProc = Start-Process $Python -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -PassThru }
+    Write-Host '[HANDS] Starting hands.py (hidden)...' -ForegroundColor Yellow
+    if ($Python -eq 'py') { $handsProc = Start-Process py -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -WindowStyle Hidden -PassThru }
+    else { $handsProc = Start-Process $Python -ArgumentList "`"$Hands`"" -WorkingDirectory $Root -RedirectStandardOutput $HandsOut -RedirectStandardError $HandsErr -WindowStyle Hidden -PassThru }
     Write-Host "[HANDS] PID $($handsProc.Id)" -ForegroundColor Green
 }
 if ($channelProc) {
     Write-Host "[CHANNEL] Already running PID $($channelProc.ProcessId)" -ForegroundColor Green
 } else {
-    Write-Host '[CHANNEL] Starting Supabase transport...' -ForegroundColor Yellow
-    if ($Python -eq 'py') { $channelProc = Start-Process py -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -PassThru }
-    else { $channelProc = Start-Process $Python -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -PassThru }
+    Write-Host '[CHANNEL] Starting Supabase transport (hidden)...' -ForegroundColor Yellow
+    if ($Python -eq 'py') { $channelProc = Start-Process py -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru }
+    else { $channelProc = Start-Process $Python -ArgumentList "`"$Channel`"" -WorkingDirectory $Root -RedirectStandardOutput $ChannelOut -RedirectStandardError $ChannelErr -WindowStyle Hidden -PassThru }
     Write-Host "[CHANNEL] PID $($channelProc.Id)" -ForegroundColor Green
 }
 
