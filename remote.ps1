@@ -14,16 +14,8 @@ function Find-CommandPath([string]$Name) {
 }
 
 try {
-    $node = Find-CommandPath 'node.exe'
-    if (-not $node) {
-        $winget = Find-CommandPath 'winget.exe'
-        if (-not $winget) { throw 'winget unavailable' }
-        & $winget install --id OpenJS.NodeJS.LTS --exact --accept-source-agreements --accept-package-agreements *> $null
-        Refresh-Path
-        $node = Find-CommandPath 'node.exe'
-    }
-    if (-not $node) { throw 'Node.js unavailable' }
-
+    # The PowerShell launcher does not require Node.js. Python is the only
+    # runtime needed by the Hands worker and transport processes.
     $python = Find-CommandPath 'python.exe'
     if (-not $python) {
         $python = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python314\python.exe'
