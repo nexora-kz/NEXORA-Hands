@@ -20,3 +20,19 @@ The end-user does not need Git or Remote Desktop Commander.
 Node.js LTS and Python are installed automatically when they are missing. Git is not required.
 
 The worker receives commands through the NEXORA transport and executes them locally on Windows.
+
+## Direct ChatGPT control
+
+NEXORA Hands now exposes a dedicated remote MCP control endpoint backed by the existing Supabase Hands control layer. The endpoint provides:
+
+- `hands_list_workers` — discover registered Hands PCs.
+- `hands_execute` — send a supported Hands operation to a selected PC.
+- `hands_command_status` — read execution status and result.
+
+The MCP endpoint is deployed as the `nexora-hands-mcp` Supabase Edge Function. It does not create a fourth transport: it is a control interface on top of the existing Hands/Supabase path.
+
+The intended architecture is:
+
+**ChatGPT → NEXORA Hands MCP → existing Hands control API → Supabase → Hands worker → Windows PC**
+
+The local worker and launcher remain unchanged.
