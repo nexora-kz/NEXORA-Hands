@@ -253,8 +253,17 @@ def execute(c):
         inbox=[p.stem for p in sorted(INBOX.glob("*.json"))]
         running=[p.stem for p in sorted(INBOX.glob("*.running"))]
         outbox=[p.stem for p in sorted(OUTBOX.glob("*.json"))]
-        return {"queued_local":inbox,"running_local":running,"pending_results":outbox,
-                "counts":{"queued_local":len(inbox),"running_local":len(running),"pending_results":len(outbox)}}
+        channel=_json_state(DATA/"supabase_channel_state.json")
+        active=set(str(x) for x in (channel.get("active_tasks") or []))
+        pending=[x for x in outbox if x in active]
+        return {
+            "queued_local":inbox,
+            "running_local":running,
+            "pending_results":pending,
+            "retained_result_files":len(outbox),
+            "channel_active_tasks":sorted(active),
+            "counts":{"queued_local":len(inbox),"running_local":len(running),"pending_results":len(pending)}
+        }
     if op=="shell":
         cmd=str(c.get("command") or "")
         if not cmd: raise ValueError("shell command is empty")

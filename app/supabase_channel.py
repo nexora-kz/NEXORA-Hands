@@ -361,8 +361,10 @@ def main():
                         result=sanitize_transport_value(json.loads(result_file.read_text(encoding="utf-8")))
                         accepted=submit_result(c,worker,task_id,result,meta["lease_token"])
                         if not accepted:
-                            result_file.unlink(missing_ok=True)
                             save_state(status="stale_result_discarded",worker_id=worker,task_id=task_id)
+                        # The server now owns an accepted result. Keep large-output
+                        # artifacts in data/results, but remove the transient outbox envelope.
+                        result_file.unlink(missing_ok=True)
                         active.pop(task_id,None)
                         channel_progress("completed")
                         continue
