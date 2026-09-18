@@ -44,7 +44,7 @@ try {
     $dataRoot = Join-Path $runtimeRoot 'data'
     $appRoot = Join-Path $runtimeRoot 'app'
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
-    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/cbccd97128f234c1213dd16f875da283b3c1946a'
+    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/abf96fd781e9106c0cb1f347b63efc3e0ddbcd07'
     $files = @(
         @{Url="$rawBase/start.ps1";Path=(Join-Path $runtimeRoot 'start.ps1')},
         @{Url="$rawBase/stop.ps1";Path=(Join-Path $runtimeRoot 'stop.ps1')},
