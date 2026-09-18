@@ -444,14 +444,14 @@ def console_task_result(payload,op):
                 continue
             idx=int(row.get("index",0))+1
             status=row.get("status")
-            child=(row.get("command") or {})
-            child_op=str(child.get("operation") or child.get("type") or "").strip().lower()
+            child_op=str(row.get("operation") or "").strip().lower()
+            child_summary=str(row.get("summary") or OP_RU.get(child_op,child_op or "Задача"))
             mark="✓" if status=="completed" else "✗"
             if status=="completed":
                 summary=_batch_payload_summary(row.get("payload"),child_op)
             else:
                 summary=str(row.get("error") or "ошибка")
-            console(f"  [{idx}/{total}] {mark} {_brief_operation(child)} — {summary[:500]}")
+            console(f"  [{idx}/{total}] {mark} {child_summary} — {summary[:500]}")
 
     for key,meta in (payload.get("large_outputs") or {}).items():
         console(f"[Полный результат:{key}] {meta.get('path')} | {_human_bytes(meta.get('bytes',0))} | SHA-256 {meta.get('sha256')}")
@@ -497,18 +497,19 @@ def execute(c):
         def run_item(pair):
             idx,item=pair
             child_op=str(item.get("operation") or item.get("type") or "").strip().lower()
-            console(f"[Пакет {idx+1}/{total}] Выполняется: {_brief_operation(item)}")
+            child_summary=_brief_operation(item)
+            console(f"[Пакет {idx+1}/{total}] Выполняется: {child_summary}")
             try:
                 payload=execute(item)
                 failed=bool(isinstance(payload,dict) and payload.get("failed"))
                 if failed:
-                    console(f"[Пакет {idx+1}/{total}] Ошибка: {_brief_operation(item)}")
+                    console(f"[Пакет {idx+1}/{total}] Ошибка: {child_summary}")
                 else:
-                    console(f"[Пакет {idx+1}/{total}] Готово: {_brief_operation(item)} — {_batch_payload_summary(payload,child_op)[:500]}")
-                return {"index":idx,"status":"error" if failed else "completed","command":item,"payload":payload}
+                    console(f"[Пакет {idx+1}/{total}] Готово: {child_summary} — {_batch_payload_summary(payload,child_op)[:500]}")
+                return {"index":idx,"status":"error" if failed else "completed","operation":child_op,"summary":child_summary,"payload":payload}
             except Exception as e:
-                console(f"[Пакет {idx+1}/{total}] Ошибка: {_brief_operation(item)} — {type(e).__name__}: {e}")
-                return {"index":idx,"status":"error","command":item,"error":f"{type(e).__name__}: {e}"}
+                console(f"[Пакет {idx+1}/{total}] Ошибка: {child_summary} — {type(e).__name__}: {e}")
+                return {"index":idx,"status":"error","operation":child_op,"summary":child_summary,"error":f"{type(e).__name__}: {e}"}
         with ThreadPoolExecutor(max_workers=min(5,len(commands)),thread_name_prefix="nexora-batch") as pool:
             items=list(pool.map(run_item,enumerate(commands)))
         failed_count=sum(1 for x in items if x.get("status")!="completed")
