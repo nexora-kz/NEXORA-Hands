@@ -43,6 +43,7 @@ RESULTS_DIR=DATA/"results"; RESULTS_DIR.mkdir(parents=True,exist_ok=True)
 for p in (INBOX,OUTBOX): p.mkdir(parents=True,exist_ok=True)
 DEFAULT_MAX_PARALLEL_COMMANDS=5
 DEFAULT_INLINE_RESULT_BYTES=65536
+STATE_WRITE_LOCK=threading.Lock()
 EXECUTOR_STARTED_AT=time.time()
 METRICS_LOCK=threading.Lock()
 RUNTIME_METRICS={
@@ -220,10 +221,21 @@ def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
     payload=sanitize_transport_value({"name":"NEXORA Hands","status":status,"pid":os.getpid(),"task_id":task_id,"error":error,
              "active_tasks":tasks,"active_count":len(tasks),
              "max_parallel_commands":int(max_parallel or max_parallel_commands()),"updated_at":time.time(),**metrics})
-    tmp=STATE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8")
-    os.replace(tmp,STATE)
-OP_RU={"shell":"PowerShell","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","delete":"Удаление","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь"}
+    tmp=STATE.with_name(f"{STATE.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
+    data=json.dumps(payload,ensure_ascii=False,indent=2)
+    with STATE_WRITE_LOCK:
+        tmp.write_text(data,encoding="utf-8")
+        last_error=None
+        for attempt in range(10):
+            try:
+                os.replace(tmp,STATE)
+                return
+            except PermissionError as e:
+                last_error=e
+                time.sleep(0.05*(attempt+1))
+        tmp.unlink(missing_ok=True)
+        raise last_error
+OP_RU={"shell":"Команда","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","delete":"Удаление","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь"}
 def console(text):
     print(sanitize_transport_value(str(text)), flush=True)
 def safe_command_preview(value):
@@ -521,12 +533,12 @@ def process_running(running):
         title=OP_RU.get(op,op or "Задача")
         _update_metrics(last_started_at=started,last_task_id=task,last_operation=op)
         if diagnostic_mode():
-            console(f"\\n[ЗАДАЧА {task}] {title}")
+            console(f"\n[ЗАДАЧА {task}] {title}")
             if op=="shell":
                 console(f"[КОМАНДА {task}] "+safe_command_preview(c.get("command")))
             console(f"[ВЫПОЛНЯЕТСЯ {task}]")
         else:
-            console(f"\\n[{title}]")
+            console(f"\n[{title}]")
         try:
             payload=compact_payload(task,execute(c))
             completed=time.time()
