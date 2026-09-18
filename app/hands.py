@@ -250,11 +250,12 @@ def execute(c):
     if op=="health":
         return health_snapshot()
     if op=="local_queue":
-        inbox=[p.stem for p in sorted(INBOX.glob("*.json"))]
-        running=[p.stem for p in sorted(INBOX.glob("*.running"))]
+        self_task=str(c.get("task_id") or "")
+        inbox=[p.stem for p in sorted(INBOX.glob("*.json")) if p.stem!=self_task]
+        running=[p.stem for p in sorted(INBOX.glob("*.running")) if p.stem!=self_task]
         outbox=[p.stem for p in sorted(OUTBOX.glob("*.json"))]
         channel=_json_state(DATA/"supabase_channel_state.json")
-        active=set(str(x) for x in (channel.get("active_tasks") or []))
+        active=set(str(x) for x in (channel.get("active_tasks") or []) if str(x)!=self_task)
         pending=[x for x in outbox if x in active]
         return {
             "queued_local":inbox,
