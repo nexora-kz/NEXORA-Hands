@@ -86,7 +86,7 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
   )
 
   const handler = createMcpHandler(() => {
-    const server = new McpServer({ name: 'NEXORA Hands', version: '4.2.0' }, { capabilities: { tools: {} } })
+    const server = new McpServer({ name: 'NEXORA Hands', version: '4.3.0' }, { capabilities: { tools: {} } })
 
     async function availableWorkers() {
       const list = await supabase.rpc('hands_mcp_list_workers')
