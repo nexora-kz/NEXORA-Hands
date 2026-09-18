@@ -268,6 +268,96 @@ def safe_command_preview(value):
     for pattern in patterns:
         text=re.sub(pattern,lambda m: m.group(1)+m.group(2)+"[REDACTED]",text)
     return text if len(text)<=500 else text[:500]+"... [TRUNCATED]"
+def console_task_start(c,op,title):
+    if op=="shell":
+        console(f"\n[Команда] {safe_command_preview(c.get('command'))}")
+        return
+    if op=="read_multiple_files":
+        paths=list(c.get("paths") or [])
+        console(f"\n[{title}] {len(paths)} файл(ов)")
+        for p in paths[:4]:
+            console(f"  {p}")
+        if len(paths)>4:
+            console(f"  ... ещё {len(paths)-4}")
+        return
+    if op in ("search_files","start_search"):
+        needle=c.get("pattern") or c.get("query") or "*"
+        console(f"\n[{title}] {needle}")
+        if c.get("path"):
+            console(f"  Путь: {c.get('path')}")
+        return
+    if op in ("copy","move","move_file"):
+        console(f"\n[{title}] {c.get('source')} -> {c.get('destination')}")
+        return
+    if op in ("process_start","session_start"):
+        console(f"\n[{title}] {safe_command_preview(c.get('command'))}")
+        return
+    if c.get("path"):
+        console(f"\n[{title}] {c.get('path')}")
+        return
+    if c.get("pid") is not None:
+        console(f"\n[{title}] PID {c.get('pid')}")
+        return
+    console(f"\n[{title}]")
+
+def _human_bytes(value):
+    try:
+        n=float(value)
+    except Exception:
+        return str(value)
+    units=("B","KB","MB","GB","TB")
+    i=0
+    while n>=1024 and i<len(units)-1:
+        n/=1024.0
+        i+=1
+    return f"{n:.1f} {units[i]}" if i else f"{int(n)} B"
+
+def console_task_result(payload,op):
+    if not isinstance(payload,dict):
+        return
+    if op=="shell":
+        out=str(payload.get("stdout") or "").strip()
+        if out:
+            console("[Результат] "+out[:4000])
+    elif op=="health":
+        console("[Результат] "
+                +("READY" if payload.get("ready") else "NOT READY")
+                +f" | transport={'online' if payload.get('transport_online') else 'offline'}"
+                +f" | executor={'online' if payload.get('executor_online') else 'offline'}"
+                +f" | active={payload.get('executor_active_count',0)}/{payload.get('max_parallel_commands','?')}"
+                +f" | queue={'STALLED' if payload.get('queue_stalled') else 'OK'}")
+    elif op=="local_queue":
+        counts=payload.get("counts") or {}
+        console(f"[Результат] queued={counts.get('queued_local',0)} | running={counts.get('running_local',0)} | pending={counts.get('pending_results',0)}")
+    elif op in ("search_files","start_search"):
+        console(f"[Результат] Найдено: {payload.get('count',0)}")
+    elif op=="read_multiple_files":
+        items=payload.get("items") or []
+        errors=sum(1 for x in items if isinstance(x,dict) and x.get("error"))
+        console(f"[Результат] Прочитано: {payload.get('count',len(items))} | ошибок: {errors}")
+    elif op=="list_directory":
+        console(f"[Результат] Объектов: {len(payload.get('items') or [])}")
+    elif op=="write_file":
+        console(f"[Результат] Записано: {_human_bytes(payload.get('bytes',0))}")
+    elif op in ("read_file","read_file_chunk"):
+        content=str(payload.get("content") or "")
+        console(f"[Результат] Прочитано: {_human_bytes(len(content.encode('utf-8','replace')))}")
+    elif op=="edit_block":
+        console(f"[Результат] Замен: {payload.get('replacements',0)}")
+    elif op in ("copy","move","move_file"):
+        console(f"[Результат] {payload.get('destination') or payload.get('path') or 'Готово'}")
+    elif op in ("process_start","session_start"):
+        console(f"[Результат] PID {payload.get('pid')} | запущено")
+    elif op=="process_list":
+        console(f"[Результат] Процессов: {payload.get('count',0)}")
+    elif op=="get_capabilities":
+        console(f"[Результат] Операций: {len(payload.get('operation_names') or [])} | параллельно: {payload.get('max_parallel_commands','?')}")
+    elif op=="batch":
+        console(f"[Результат] Задач: {payload.get('count',0)} | ошибок: {payload.get('failed_count',0)}")
+
+    for key,meta in (payload.get("large_outputs") or {}).items():
+        console(f"[Полный результат:{key}] {meta.get('path')} | {_human_bytes(meta.get('bytes',0))} | SHA-256 {meta.get('sha256')}")
+
 def execute(c):
     op=str(c.get("operation") or c.get("type") or "").strip().lower()
     if op=="get_capabilities":
@@ -576,12 +666,7 @@ def process_running(running):
                 console(f"[КОМАНДА {task}] "+safe_command_preview(c.get("command")))
             console(f"[ВЫПОЛНЯЕТСЯ {task}]")
         else:
-            if op=="shell":
-                console(f"\n[Команда] "+safe_command_preview(c.get("command")))
-            elif c.get("path"):
-                console(f"\n[{title}] {c.get('path')}")
-            else:
-                console(f"\n[{title}]")
+            console_task_start(c,op,title)
         try:
             payload=compact_payload(task,execute(c))
             completed=time.time()
@@ -610,8 +695,7 @@ def process_running(running):
                     if out and str(out).strip():
                         console(f"[РЕЗУЛЬТАТ {task}] "+str(out).strip()[:4000])
                 else:
-                    if out and str(out).strip():
-                        console("[Результат] "+str(out).strip()[:4000])
+                    console_task_result(payload,op)
                     console("[ГОТОВО] Выполнено успешно")
         except Exception as e:
             completed=time.time()
