@@ -534,7 +534,10 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         names=c.get("names")
         if names is None: return {"count":len(os.environ),"names":sorted(os.environ.keys())}
         return {"values":{str(n):os.environ.get(str(n)) for n in names}}
-    matches=difflib.get_close_matches(op,sorted(SUPPORTED_OPERATIONS),n=3,cutoff=0.45) if op else []
+    if op and op.endswith("_check") and op[:-6] in SUPPORTED_OPERATIONS:
+        matches=[op[:-6]]
+    else:
+        matches=difflib.get_close_matches(op,sorted(SUPPORTED_OPERATIONS),n=3,cutoff=0.45) if op else []
     hint=(" Did you mean: "+", ".join(matches)+"?") if matches else ""
     raise ValueError(f"unsupported operation: {op or '<empty>'}.{hint} Use get_capabilities for the full list.")
 def recover_interrupted_tasks():
