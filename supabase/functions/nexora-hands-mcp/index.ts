@@ -150,7 +150,32 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
         inputSchema: {},
       },
       async () => {
-        const workers = (await availableWorkers()).map(decorateWorker)
+        const raw = await availableWorkers()
+        const workers = await Promise.all(raw.map(async (row: any) => {
+          const worker = decorateWorker(row)
+          try {
+            const probe = await submitAndWait(String(worker.worker_id), { operation: 'health' }, 15)
+            const payload = workerResult(probe.latest)?.payload || null
+            return {
+              ...worker,
+              executor_online: !probe.timeout && Boolean(payload?.executor_online),
+              executor_health: payload || (probe.timeout ? 'health_probe_timeout' : 'health_unavailable'),
+              ready: !probe.timeout && Boolean(payload?.ready),
+              queue_stalled: payload?.queue_stalled ?? null,
+              executor_pid: payload?.executor_pid ?? null,
+              active_count: payload?.executor_active_count ?? null,
+              max_parallel_commands: payload?.max_parallel_commands ?? null,
+            }
+          } catch (e) {
+            return {
+              ...worker,
+              executor_online: false,
+              executor_health: 'health_probe_failed',
+              ready: false,
+              health_error: String(e),
+            }
+          }
+        }))
         return {
           content: [{ type: 'text', text: JSON.stringify(workers) }],
           structuredContent: { workers },

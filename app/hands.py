@@ -1,5 +1,6 @@
 import json
 import os
+import difflib
 import hashlib
 import threading
 import platform
@@ -34,7 +35,24 @@ def powershell_args(command):
     import base64
     wrapped=PS_UTF8_BOOTSTRAP+str(command)
     encoded=base64.b64encode(wrapped.encode("utf-16le")).decode("ascii")
-    return ["powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded]
+    return ["powershell.exe","-NoProfile","-NonInteractive","-OutputFormat","Text","-EncodedCommand",encoded]
+
+def normalize_powershell_stream(text):
+    text=str(text or "")
+    if "#< CLIXML" not in text:
+        return text
+    try:
+        import xml.etree.ElementTree as ET
+        xml=text[text.index("<Objs"):]
+        root=ET.fromstring(xml)
+        parts=[]
+        for el in root.iter():
+            if el.tag.rsplit("}",1)[-1]=="S" and el.text:
+                parts.append(re.sub(r"_x([0-9A-Fa-f]{4})_",lambda m: chr(int(m.group(1),16)),el.text))
+        clean="".join(parts).strip()
+        return clean or text
+    except Exception:
+        return text
 
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/"data"; PROCESS_DIR=DATA/"processes"; PROCESS_DIR.mkdir(parents=True,exist_ok=True)
@@ -92,6 +110,7 @@ def diagnostic_mode():
 
 SUPPORTED_OPERATIONS={
     "shell":"PowerShell command",
+    "batch":"Execute up to 5 Hands operations concurrently",
     "read_file":"Read a UTF-8 text file",
     "write_file":"Write a UTF-8 text file",
     "list_directory":"List directory entries",
@@ -277,18 +296,33 @@ def execute(c):
             "channel_active_tasks":sorted(active),
             "counts":{"queued_local":len(inbox),"running_local":len(running),"pending_results":len(pending)}
         }
+    if op=="batch":
+        commands=c.get("commands") or []
+        if not isinstance(commands,list) or not commands:
+            raise ValueError("batch commands is empty")
+        if len(commands)>5:
+            raise ValueError("batch supports at most 5 commands")
+        for item in commands:
+            if not isinstance(item,dict) or str(item.get("operation") or "").strip().lower()=="batch":
+                raise ValueError("batch items must be operation objects and cannot contain nested batch")
+        def run_item(pair):
+            idx,item=pair
+            try:
+                payload=execute(item)
+                failed=bool(isinstance(payload,dict) and payload.get("failed"))
+                return {"index":idx,"status":"error" if failed else "completed","payload":payload}
+            except Exception as e:
+                return {"index":idx,"status":"error","error":f"{type(e).__name__}: {e}"}
+        with ThreadPoolExecutor(max_workers=min(5,len(commands)),thread_name_prefix="nexora-batch") as pool:
+            items=list(pool.map(run_item,enumerate(commands)))
+        failed_count=sum(1 for x in items if x.get("status")!="completed")
+        return {"count":len(items),"failed_count":failed_count,"failed":failed_count>0,"items":items}
     if op=="shell":
         cmd=str(c.get("command") or "")
         if not cmd: raise ValueError("shell command is empty")
-        import base64
-        wrapped="$ErrorActionPreference='Continue'; $ProgressPreference='SilentlyContinue'; & {"+cmd+"} 2>&1 | Out-String | ForEach-Object { [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($_)) }"
-        encoded=base64.b64encode((PS_UTF8_BOOTSTRAP+wrapped).encode("utf-16le")).decode("ascii")
-        r=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-EncodedCommand",encoded],capture_output=True,text=True,encoding="ascii",errors="replace",timeout=int(c.get("timeout_seconds") or 300))
-        raw=(r.stdout or "").strip(); out=""
-        if raw:
-            try: out=base64.b64decode(raw).decode("utf-16le")
-            except Exception: out=raw
-        return {"returncode":r.returncode,"stdout":out,"stderr":r.stderr}
+        wrapped="$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "+cmd
+        r=subprocess.run(powershell_args(wrapped),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=int(c.get("timeout_seconds") or 300))
+        return {"returncode":int(r.returncode),"stdout":normalize_powershell_stream(r.stdout or ""),"stderr":normalize_powershell_stream(r.stderr or ""),"failed":int(r.returncode)!=0}
     if op=="read_file":
         p=Path(str(c["path"])).resolve(); return {"path":str(p),"content":p.read_text(encoding="utf-8",errors="replace")}
     if op=="write_file":
@@ -500,8 +534,9 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         names=c.get("names")
         if names is None: return {"count":len(os.environ),"names":sorted(os.environ.keys())}
         return {"values":{str(n):os.environ.get(str(n)) for n in names}}
-    supported=", ".join(sorted(SUPPORTED_OPERATIONS))
-    raise ValueError(f"unsupported operation: {op or '<empty>'}. supported operations: {supported}")
+    matches=difflib.get_close_matches(op,sorted(SUPPORTED_OPERATIONS),n=3,cutoff=0.45) if op else []
+    hint=(" Did you mean: "+", ".join(matches)+"?") if matches else ""
+    raise ValueError(f"unsupported operation: {op or '<empty>'}.{hint} Use get_capabilities for the full list.")
 def recover_interrupted_tasks():
     recovered=[]
     for running in sorted(INBOX.glob("*.running")):
@@ -538,22 +573,43 @@ def process_running(running):
                 console(f"[КОМАНДА {task}] "+safe_command_preview(c.get("command")))
             console(f"[ВЫПОЛНЯЕТСЯ {task}]")
         else:
-            console(f"\n[{title}]")
+            if op=="shell":
+                console(f"\n[Команда] "+safe_command_preview(c.get("command")))
+            elif c.get("path"):
+                console(f"\n[{title}] {c.get('path')}")
+            else:
+                console(f"\n[{title}]")
         try:
             payload=compact_payload(task,execute(c))
             completed=time.time()
-            result={"task_id":task,"status":"completed","stage":"completed","payload":payload,
-                    "timing":{"started_at":started,"completed_at":completed,
-                              "duration_ms":int((completed-started)*1000)}}
-            metrics=_metrics_snapshot()
-            _update_metrics(last_completed_at=completed,completed_count=int(metrics.get("completed_count") or 0)+1)
-            if diagnostic_mode():
-                console(f"[ГОТОВО {task}] Выполнено успешно")
-                out=payload.get("stdout") if isinstance(payload,dict) else None
-                if out and str(out).strip():
-                    console(f"[РЕЗУЛЬТАТ {task}] "+str(out).strip())
+            failed=bool(isinstance(payload,dict) and payload.get("failed"))
+            if failed:
+                rc=int(payload.get("returncode") or 1)
+                result={"task_id":task,"status":"error","stage":"failed","payload":payload,
+                        "error":f"Command exited with code {rc}",
+                        "timing":{"started_at":started,"completed_at":completed,
+                                  "duration_ms":int((completed-started)*1000)}}
+                metrics=_metrics_snapshot()
+                _update_metrics(last_completed_at=completed,failed_count=int(metrics.get("failed_count") or 0)+1)
+                err=str(payload.get("stderr") or "").strip()
+                out=str(payload.get("stdout") or "").strip()
+                detail=err or out or f"Код возврата: {rc}"
+                console((f"[ОШИБКА {task}] " if diagnostic_mode() else "[ОШИБКА] ")+detail[:4000])
             else:
-                console("[ГОТОВО] Выполнено успешно")
+                result={"task_id":task,"status":"completed","stage":"completed","payload":payload,
+                        "timing":{"started_at":started,"completed_at":completed,
+                                  "duration_ms":int((completed-started)*1000)}}
+                metrics=_metrics_snapshot()
+                _update_metrics(last_completed_at=completed,completed_count=int(metrics.get("completed_count") or 0)+1)
+                out=payload.get("stdout") if isinstance(payload,dict) else None
+                if diagnostic_mode():
+                    console(f"[ГОТОВО {task}] Выполнено успешно")
+                    if out and str(out).strip():
+                        console(f"[РЕЗУЛЬТАТ {task}] "+str(out).strip()[:4000])
+                else:
+                    if out and str(out).strip():
+                        console("[Результат] "+str(out).strip()[:4000])
+                    console("[ГОТОВО] Выполнено успешно")
         except Exception as e:
             completed=time.time()
             result={"task_id":task,"status":"error","stage":"failed","error":f"{type(e).__name__}: {e}",
