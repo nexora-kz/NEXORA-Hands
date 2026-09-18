@@ -1,4 +1,5 @@
 import { createMcpHandler, McpServer } from 'npm:@modelcontextprotocol/server@^2.0.0'
+import { createClient } from 'npm:@supabase/supabase-js@^2.57.4'
 import { pipeline } from 'npm:@supabase/middleware@^0.5.0'
 import { withOAuthProtectedResource, withSupabase } from 'npm:@supabase/server@^1.6.0'
 import * as z from 'npm:zod@^4.3.6'
@@ -78,6 +79,12 @@ function normalizeStatus(data: any) {
 }
 
 Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' })], async (_req, { supabase }) => {
+  const admin = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  )
+
   const handler = createMcpHandler(() => {
     const server = new McpServer({ name: 'NEXORA Hands', version: '4.2.0' }, { capabilities: { tools: {} } })
 
@@ -91,6 +98,25 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
 
     async function selectedWorker(requested: string) {
       return resolveWorker(await availableWorkers(), requested)
+    }
+
+    async function authorizedWorkerIds() {
+      return new Set((await availableWorkers()).map((w: any) => String(w.worker_id || '')))
+    }
+
+    async function requireAuthorizedTask(taskId: string, columns = 'id,task_id,worker_id,status,created_at,claimed_at,completed_at,error,command') {
+      const q = await admin
+        .from('hands_commands')
+        .select(columns)
+        .eq('task_id', taskId)
+        .maybeSingle()
+      if (q.error) throw new Error(q.error.message)
+      if (!q.data) throw new Error(`Task not found: ${taskId}`)
+      const allowed = await authorizedWorkerIds()
+      if (!allowed.has(String((q.data as any).worker_id || ''))) {
+        throw new Error('Task is not owned by an authorized NEXORA Hands worker')
+      }
+      return q.data as any
     }
 
     async function submitAndWait(workerId: string, command: any, timeoutSeconds = 300) {
@@ -225,7 +251,7 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
       'hands_queue',
       {
         title: 'Show NEXORA Hands queue',
-        description: 'Show queued and claimed commands for one Windows PC. Requires the authenticated user to have queue-row access.',
+        description: 'Show queued and claimed commands for one authorized Windows PC.',
         inputSchema: {
           worker_id: z.string().min(1),
           limit: z.number().int().min(1).max(100).optional(),
@@ -233,9 +259,9 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
       },
       async ({ worker_id, limit }) => {
         const selected = await selectedWorker(worker_id)
-        const q = await supabase
+        const q = await admin
           .from('hands_commands')
-          .select('id,task_id,worker_id,status,created_at,claimed_at,completed_at,error,command')
+          .select('id,task_id,worker_id,status,created_at,claimed_at,completed_at,error')
           .eq('worker_id', String(selected.worker_id))
           .in('status', ['queued', 'claimed'])
           .order('created_at', { ascending: true })
@@ -255,25 +281,18 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
         inputSchema: { task_id: z.string().min(1) },
       },
       async ({ task_id }) => {
-        const existing = await supabase
-          .from('hands_commands')
-          .select('id,task_id,status,worker_id')
-          .eq('task_id', task_id)
-          .maybeSingle()
-        if (existing.error) throw new Error(existing.error.message)
-        if (!existing.data) throw new Error(`Task not found: ${task_id}`)
-        const status = String(existing.data.status || '')
+        const existing = await requireAuthorizedTask(task_id, 'id,task_id,status,worker_id')
+        const status = String(existing.status || '')
         if (!['queued', 'claimed'].includes(status)) {
           const result = { task_id, cancelled: false, status, reason: 'task_not_cancellable' }
           return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result }
         }
-        const updated = await supabase
+        const updated = await admin
           .from('hands_commands')
           .update({
             status: 'error',
             error: 'cancelled_by_user',
             completed_at: new Date().toISOString(),
-            lease_token: null,
           })
           .eq('task_id', task_id)
           .in('status', ['queued', 'claimed'])
@@ -296,20 +315,47 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
         },
       },
       async ({ task_id, timeout_seconds }) => {
-        const existing = await supabase
-          .from('hands_commands')
-          .select('task_id,worker_id,command')
-          .eq('task_id', task_id)
-          .maybeSingle()
-        if (existing.error) throw new Error(existing.error.message)
-        if (!existing.data) throw new Error(`Task not found: ${task_id}`)
-        const newRun = await submitAndWait(String(existing.data.worker_id), existing.data.command || {}, timeout_seconds || 300)
+        const existing = await requireAuthorizedTask(task_id, 'task_id,worker_id,command')
+        const newRun = await submitAndWait(String(existing.worker_id), existing.command || {}, timeout_seconds || 300)
         const result = {
           original_task_id: task_id,
           task_id: newRun.task_id,
           timeout: newRun.timeout,
           lifecycle: newRun.lifecycle,
           result: newRun.latest,
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result }
+      },
+    )
+
+    server.registerTool(
+      'hands_prune_tasks',
+      {
+        title: 'Prune old NEXORA Hands tasks',
+        description: 'Delete old completed/error command rows for one authorized Windows PC. Active queued/claimed tasks are never deleted.',
+        inputSchema: {
+          worker_id: z.string().min(1),
+          older_than_hours: z.number().int().min(1).max(8760).optional(),
+        },
+      },
+      async ({ worker_id, older_than_hours }) => {
+        const selected = await selectedWorker(worker_id)
+        const hours = older_than_hours || 168
+        const cutoff = new Date(Date.now() - hours * 3600_000).toISOString()
+        const deleted = await admin
+          .from('hands_commands')
+          .delete()
+          .eq('worker_id', String(selected.worker_id))
+          .in('status', ['completed', 'error'])
+          .lt('created_at', cutoff)
+          .select('task_id,status')
+        if (deleted.error) throw new Error(deleted.error.message)
+        const rows = deleted.data || []
+        const result = {
+          worker_id: selected.worker_id,
+          worker_name: selected.name,
+          cutoff,
+          deleted_count: rows.length,
         }
         return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result }
       },
