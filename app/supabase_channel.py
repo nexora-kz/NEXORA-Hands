@@ -24,6 +24,21 @@ OUTBOX.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_MAX_PARALLEL_COMMANDS = 5
 
+def sanitize_transport_value(value):
+    """Recursively remove PostgreSQL-incompatible U+0000 from JSON payloads."""
+    if isinstance(value,str):
+        return value.replace("\x00","\\x00")
+    if isinstance(value,bytes):
+        return value.decode("utf-8","replace").replace("\x00","\\x00")
+    if isinstance(value,dict):
+        return {
+            (sanitize_transport_value(k) if isinstance(k,(str,bytes)) else k): sanitize_transport_value(v)
+            for k,v in value.items()
+        }
+    if isinstance(value,(list,tuple)):
+        return [sanitize_transport_value(v) for v in value]
+    return value
+
 def max_parallel_commands(c):
     try: value = int(c.get("max_parallel_commands") or DEFAULT_MAX_PARALLEL_COMMANDS)
     except Exception: value = DEFAULT_MAX_PARALLEL_COMMANDS
@@ -61,7 +76,8 @@ def request(method, path, body=None, include_worker_token=True):
         headers["x-nexora-hands-token"] = str(c["worker_token"])
     else:
         headers["Authorization"] = "Bearer " + c["publishable_key"]
-    data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
+    safe_body = None if body is None else sanitize_transport_value(body)
+    data = None if safe_body is None else json.dumps(safe_body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(c["rest_url"] + path, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -87,8 +103,8 @@ def save_state(**kw):
     if STATE.exists():
         try: state = json.loads(STATE.read_text(encoding="utf-8"))
         except Exception: pass
-    state.update(kw)
-    STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    state.update(sanitize_transport_value(kw))
+    STATE.write_text(json.dumps(sanitize_transport_value(state), ensure_ascii=False, indent=2), encoding="utf-8")
 
 def claim(c, worker):
     q = urllib.parse.urlencode({"channel_token": "eq." + token(c), "worker_id": "eq." + worker, "status": "eq.queued", "order": "created_at.asc", "limit": "1"})
@@ -280,28 +296,35 @@ def main():
                 save_state(status="recovery_scan",worker_id=worker,recovered=recovered,guarded=guarded,
                            max_parallel_commands=limit,active_count=len(active),active_tasks=sorted(active))
 
+            result_submit_errors={}
             for task_id,meta in list(active.items()):
-                result_file=OUTBOX/f"{task_id}.json"
-                if result_file.exists():
-                    result=json.loads(result_file.read_text(encoding="utf-8"))
-                    accepted=submit_result(c,worker,task_id,result,meta["lease_token"])
-                    if not accepted:
-                        result_file.unlink(missing_ok=True)
-                        save_state(status="stale_result_discarded",worker_id=worker,task_id=task_id)
-                    active.pop(task_id,None)
-                    continue
+                try:
+                    result_file=OUTBOX/f"{task_id}.json"
+                    if result_file.exists():
+                        result=sanitize_transport_value(json.loads(result_file.read_text(encoding="utf-8")))
+                        accepted=submit_result(c,worker,task_id,result,meta["lease_token"])
+                        if not accepted:
+                            result_file.unlink(missing_ok=True)
+                            save_state(status="stale_result_discarded",worker_id=worker,task_id=task_id)
+                        active.pop(task_id,None)
+                        continue
 
-                now=time.monotonic()
-                if now>=meta["deadline"]:
-                    submit_result(c,worker,task_id,
-                                  {"task_id":task_id,"status":"timeout_waiting_result"},
-                                  meta["lease_token"],"local result timeout")
-                    active.pop(task_id,None)
-                    continue
+                    now=time.monotonic()
+                    if now>=meta["deadline"]:
+                        submit_result(c,worker,task_id,
+                                      {"task_id":task_id,"status":"timeout_waiting_result"},
+                                      meta["lease_token"],"local result timeout")
+                        active.pop(task_id,None)
+                        continue
 
-                if now>=meta["lease_refresh_at"]:
-                    refresh_lease(worker,meta)
-                    meta["lease_refresh_at"]=now+lease_interval
+                    if now>=meta["lease_refresh_at"]:
+                        refresh_lease(worker,meta)
+                        meta["lease_refresh_at"]=now+lease_interval
+                except Exception as task_error:
+                    # A single malformed/failed result must not block the other
+                    # worker slots or stop claiming new commands.
+                    result_submit_errors[task_id]=f"{type(task_error).__name__}: {task_error}"
+                    continue
 
             while len(active)<limit:
                 cmd=claim(c,worker)
@@ -312,7 +335,9 @@ def main():
 
             save_state(status="busy" if active else "idle",worker_id=worker,
                        heartbeat_ok=True,max_parallel_commands=limit,
-                       active_count=len(active),active_tasks=sorted(active))
+                       active_count=len(active),active_tasks=sorted(active),
+                       error=("; ".join(f"{k}: {v}" for k,v in sorted(result_submit_errors.items())) if result_submit_errors else ""),
+                       result_submit_errors=result_submit_errors)
         except Exception as e:
             save_state(status="error",worker_id=worker,error=f"{type(e).__name__}: {e}",
                        max_parallel_commands=limit,active_count=len(active),active_tasks=sorted(active))

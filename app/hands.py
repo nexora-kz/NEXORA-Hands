@@ -50,17 +50,37 @@ def max_parallel_commands():
     except Exception: value=DEFAULT_MAX_PARALLEL_COMMANDS
     return max(1,min(16,value))
 
+def sanitize_transport_value(value):
+    """Make JSON-compatible results safe for PostgreSQL/Supabase text/jsonb.
+
+    PostgreSQL text cannot contain U+0000. Binary-ish command output can
+    legitimately decode to NUL characters, so preserve them visibly as \x00
+    instead of letting one result wedge the transport queue.
+    """
+    if isinstance(value,str):
+        return value.replace("\x00","\\x00")
+    if isinstance(value,bytes):
+        return value.decode("utf-8","replace").replace("\x00","\\x00")
+    if isinstance(value,dict):
+        return {
+            (sanitize_transport_value(k) if isinstance(k,(str,bytes)) else k): sanitize_transport_value(v)
+            for k,v in value.items()
+        }
+    if isinstance(value,(list,tuple)):
+        return [sanitize_transport_value(v) for v in value]
+    return value
+
 def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
     tasks=list(active_tasks or [])
-    payload={"name":"NEXORA Hands","status":status,"pid":os.getpid(),"task_id":task_id,"error":error,
+    payload=sanitize_transport_value({"name":"NEXORA Hands","status":status,"pid":os.getpid(),"task_id":task_id,"error":error,
              "active_tasks":tasks,"active_count":len(tasks),
-             "max_parallel_commands":int(max_parallel or max_parallel_commands()),"updated_at":time.time()}
+             "max_parallel_commands":int(max_parallel or max_parallel_commands()),"updated_at":time.time()})
     tmp=STATE.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8")
     os.replace(tmp,STATE)
 OP_RU={"shell":"PowerShell","read_file":"\u0427\u0442\u0435\u043d\u0438\u0435 \u0444\u0430\u0439\u043b\u0430","write_file":"\u0417\u0430\u043f\u0438\u0441\u044c \u0444\u0430\u0439\u043b\u0430","list_directory":"\u041f\u0440\u043e\u0441\u043c\u043e\u0442\u0440 \u043f\u0430\u043f\u043a\u0438","copy":"\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435","move":"\u041f\u0435\u0440\u0435\u043c\u0435\u0449\u0435\u043d\u0438\u0435","delete":"\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435","process_list":"\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u043e\u0432","process_start":"\u0417\u0430\u043f\u0443\u0441\u043a \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430","process_wait":"\u041e\u0436\u0438\u0434\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430","system_info":"\u0418\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u044f \u043e \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0435","system_resources":"\u0420\u0435\u0441\u0443\u0440\u0441\u044b \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0430","start_search":"\u041f\u043e\u0438\u0441\u043a \u0444\u0430\u0439\u043b\u043e\u0432"}
 def console(text):
-    print(text, flush=True)
+    print(sanitize_transport_value(str(text)), flush=True)
 def safe_command_preview(value):
     import re
     text=str(value or "")
@@ -309,7 +329,7 @@ def recover_interrupted_tasks():
             pass
         result_file=OUTBOX/f"{task}.json"
         if not result_file.exists():
-            result={"task_id":task,"status":"error","error":"worker_restarted_during_task"}
+            result=sanitize_transport_value({"task_id":task,"status":"error","error":"worker_restarted_during_task"})
             tmp=result_file.with_suffix(".tmp")
             tmp.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
             os.replace(tmp,result_file)
@@ -341,6 +361,7 @@ def process_running(running):
     except Exception as e:
         result={"task_id":task,"status":"error","error":f"{type(e).__name__}: {e}"}
         console(f"[\u041e\u0428\u0418\u0411\u041a\u0410 {task}] "+str(e))
+    result=sanitize_transport_value(result)
     result_file=OUTBOX/f"{task}.json"
     tmp=result_file.with_suffix(".tmp")
     tmp.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
