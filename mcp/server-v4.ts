@@ -119,7 +119,7 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
       return q.data as any
     }
 
-    async function submitAndWait(workerId: string, command: any, timeoutSeconds = 300) {
+    async function submitOnly(workerId: string, command: any) {
       const task_id = `hands-mcp-${crypto.randomUUID()}`
       const { error } = await supabase.rpc('hands_mcp_command', {
         p_task_id: task_id,
@@ -127,6 +127,11 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
         p_command: command,
       })
       if (error) throw new Error(error.message)
+      return task_id
+    }
+
+    async function submitAndWait(workerId: string, command: any, timeoutSeconds = 300) {
+      const task_id = await submitOnly(workerId, command)
       const deadline = Date.now() + Math.max(5, Math.min(600, timeoutSeconds)) * 1000
       let latest: any = null
       while (Date.now() < deadline) {
@@ -235,7 +240,7 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
       'hands_execute',
       {
         title: 'Execute on NEXORA Hands PC',
-        description: 'Execute any operation supported by NEXORA Hands on a selected Windows PC. Use hands_capabilities when the operation name or parameters are uncertain.',
+        description: 'Execute any operation supported by NEXORA Hands on a selected Windows PC. Set command._hands_async=true to submit immediately without waiting; then poll hands_command_status. Use this for real parallel execution. Use hands_capabilities when the operation name or parameters are uncertain.',
         inputSchema: {
           worker_id: z.string().min(1).describe('Worker ID or permanent NEXORA Hands friendly name'),
           command: z.record(z.string(), z.any()),
@@ -244,7 +249,24 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
       },
       async ({ worker_id, command, timeout_seconds }) => {
         const selected = await selectedWorker(worker_id)
-        const run = await submitAndWait(String(selected.worker_id), command, timeout_seconds || 300)
+        const raw = { ...(command || {}) }
+        const asyncSubmit = Boolean(raw._hands_async)
+        delete raw._hands_async
+
+        if (asyncSubmit) {
+          const task_id = await submitOnly(String(selected.worker_id), raw)
+          const result = {
+            task_id,
+            worker_id: selected.worker_id,
+            worker_name: selected.name,
+            submitted: true,
+            async: true,
+            lifecycle: { stage: 'queued', status: 'queued' },
+          }
+          return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result }
+        }
+
+        const run = await submitAndWait(String(selected.worker_id), raw, timeout_seconds || 300)
         const result = {
           task_id: run.task_id,
           worker_id: selected.worker_id,
