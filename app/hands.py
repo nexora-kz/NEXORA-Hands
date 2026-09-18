@@ -254,7 +254,7 @@ def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
                 time.sleep(0.05*(attempt+1))
         tmp.unlink(missing_ok=True)
         raise last_error
-OP_RU={"shell":"Команда","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","delete":"Удаление","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь"}
+OP_RU={"shell":"Команда","batch":"Пакетное выполнение","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","move_file":"Перемещение","delete":"Удаление","mkdir":"Создание папки","exists":"Проверка пути","stat":"Сведения о файле","read_file_chunk":"Чтение фрагмента файла","get_file_info":"Сведения о файле","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь"}
 def console(text):
     print(sanitize_transport_value(str(text)), flush=True)
 def safe_command_preview(value):
@@ -268,7 +268,89 @@ def safe_command_preview(value):
     for pattern in patterns:
         text=re.sub(pattern,lambda m: m.group(1)+m.group(2)+"[REDACTED]",text)
     return text if len(text)<=500 else text[:500]+"... [TRUNCATED]"
+def _human_age(value):
+    try:
+        seconds=max(0.0,float(value))
+    except (TypeError,ValueError):
+        return "Нет данных"
+    if seconds<2:
+        return "Только что"
+    if seconds<60:
+        return f"{int(round(seconds))} сек. назад"
+    if seconds<3600:
+        return f"{int(seconds//60)} мин. назад"
+    return f"{int(seconds//3600)} ч. назад"
+
+def _brief_operation(c):
+    if not isinstance(c,dict):
+        return "Некорректная задача"
+    op=str(c.get("operation") or c.get("type") or "").strip().lower()
+    title=OP_RU.get(op,op or "Задача")
+    if op=="shell":
+        return f"{title}: {safe_command_preview(c.get('command'))}"
+    if op=="read_multiple_files":
+        return f"{title}: {len(c.get('paths') or [])} файл(ов)"
+    if op in ("search_files","start_search"):
+        needle=c.get("pattern") or c.get("query") or "*"
+        path=c.get("path")
+        return f"{title}: {needle}" + (f" | {path}" if path else "")
+    if op in ("copy","move","move_file"):
+        return f"{title}: {c.get('source')} -> {c.get('destination')}"
+    if op in ("process_start","session_start"):
+        return f"{title}: {safe_command_preview(c.get('command'))}"
+    if c.get("path"):
+        return f"{title}: {c.get('path')}"
+    if c.get("pid") is not None:
+        return f"{title}: PID {c.get('pid')}"
+    return title
+
+def _batch_payload_summary(payload,op):
+    if not isinstance(payload,dict):
+        return "готово"
+    if op=="shell":
+        out=str(payload.get("stdout") or "").strip().replace("\n"," | ")
+        if out:
+            return out[:240]
+        return f"код завершения {payload.get('returncode',0)}"
+    if op=="health":
+        return "система готова" if payload.get("ready") else "система требует проверки"
+    if op=="local_queue":
+        counts=payload.get("counts") or {}
+        return f"в очереди {counts.get('queued_local',0)}, выполняется {counts.get('running_local',0)}, ожидает отправки {counts.get('pending_results',0)}"
+    if op in ("search_files","start_search"):
+        return f"найдено {payload.get('count',0)}"
+    if op=="read_multiple_files":
+        items=payload.get("items") or []
+        errors=sum(1 for x in items if isinstance(x,dict) and x.get("error"))
+        return f"прочитано {payload.get('count',len(items))}, ошибок {errors}"
+    if op=="list_directory":
+        return f"объектов {len(payload.get('items') or [])}"
+    if op=="write_file":
+        return f"записано {_human_bytes(payload.get('bytes',0))}"
+    if op in ("read_file","read_file_chunk"):
+        content=str(payload.get("content") or "")
+        return f"прочитано {_human_bytes(len(content.encode('utf-8','replace')))}"
+    if op=="edit_block":
+        return f"замен {payload.get('replacements',0)}"
+    if op in ("copy","move","move_file"):
+        return str(payload.get("destination") or payload.get("path") or "готово")
+    if op in ("process_start","session_start"):
+        return f"PID {payload.get('pid')} запущен"
+    if op=="process_list":
+        return f"процессов {payload.get('count',0)}"
+    if op=="get_capabilities":
+        return f"операций {len(payload.get('operation_names') or [])}, параллельно {payload.get('max_parallel_commands','?')}"
+    if payload.get("path"):
+        return str(payload.get("path"))
+    return "готово"
+
 def console_task_start(c,op,title):
+    if op=="batch":
+        commands=c.get("commands") or []
+        console(f"\n[{title}] Задач: {len(commands)}")
+        for i,item in enumerate(commands,1):
+            console(f"  [{i}/{len(commands)}] {_brief_operation(item)}")
+        return
     if op=="shell":
         console(f"\n[Команда] {safe_command_preview(c.get('command'))}")
         return
@@ -320,12 +402,12 @@ def console_task_result(payload,op):
         if out:
             console("[Результат] "+out[:4000])
     elif op=="health":
-        console("[Результат] "
-                +("READY" if payload.get("ready") else "NOT READY")
-                +f" | transport={'online' if payload.get('transport_online') else 'offline'}"
-                +f" | executor={'online' if payload.get('executor_online') else 'offline'}"
-                +f" | active={payload.get('executor_active_count',0)}/{payload.get('max_parallel_commands','?')}"
-                +f" | queue={'STALLED' if payload.get('queue_stalled') else 'OK'}")
+        console(f"[Состояние] {'ГОТОВ' if payload.get('ready') else 'ТРЕБУЕТ ВНИМАНИЯ'}")
+        console(f"[Связь] {'Подключена' if payload.get('transport_online') else 'Нет связи'}")
+        console(f"[Исполнитель] {'Работает' if payload.get('executor_online') else 'Недоступен'}")
+        console(f"[Активные задачи] {payload.get('executor_active_count',0)} из {payload.get('max_parallel_commands','?')}")
+        console(f"[Очередь] {'Требует проверки' if payload.get('queue_stalled') else 'В норме'}")
+        console(f"[Последний сигнал] {_human_age(payload.get('transport_heartbeat_age_seconds'))}")
     elif op=="local_queue":
         counts=payload.get("counts") or {}
         console(f"[Результат] queued={counts.get('queued_local',0)} | running={counts.get('running_local',0)} | pending={counts.get('pending_results',0)}")
@@ -353,7 +435,23 @@ def console_task_result(payload,op):
     elif op=="get_capabilities":
         console(f"[Результат] Операций: {len(payload.get('operation_names') or [])} | параллельно: {payload.get('max_parallel_commands','?')}")
     elif op=="batch":
-        console(f"[Результат] Задач: {payload.get('count',0)} | ошибок: {payload.get('failed_count',0)}")
+        items=payload.get("items") or []
+        total=int(payload.get("count",len(items)) or 0)
+        failed=int(payload.get("failed_count",0) or 0)
+        console(f"[Результат] Задач: {total} | выполнено: {max(0,total-failed)} | ошибок: {failed}")
+        for row in items:
+            if not isinstance(row,dict):
+                continue
+            idx=int(row.get("index",0))+1
+            status=row.get("status")
+            child=(row.get("command") or {})
+            child_op=str(child.get("operation") or child.get("type") or "").strip().lower()
+            mark="✓" if status=="completed" else "✗"
+            if status=="completed":
+                summary=_batch_payload_summary(row.get("payload"),child_op)
+            else:
+                summary=str(row.get("error") or "ошибка")
+            console(f"  [{idx}/{total}] {mark} {_brief_operation(child)} — {summary[:500]}")
 
     for key,meta in (payload.get("large_outputs") or {}).items():
         console(f"[Полный результат:{key}] {meta.get('path')} | {_human_bytes(meta.get('bytes',0))} | SHA-256 {meta.get('sha256')}")
@@ -395,14 +493,22 @@ def execute(c):
         for item in commands:
             if not isinstance(item,dict) or str(item.get("operation") or "").strip().lower()=="batch":
                 raise ValueError("batch items must be operation objects and cannot contain nested batch")
+        total=len(commands)
         def run_item(pair):
             idx,item=pair
+            child_op=str(item.get("operation") or item.get("type") or "").strip().lower()
+            console(f"[Пакет {idx+1}/{total}] Выполняется: {_brief_operation(item)}")
             try:
                 payload=execute(item)
                 failed=bool(isinstance(payload,dict) and payload.get("failed"))
-                return {"index":idx,"status":"error" if failed else "completed","payload":payload}
+                if failed:
+                    console(f"[Пакет {idx+1}/{total}] Ошибка: {_brief_operation(item)}")
+                else:
+                    console(f"[Пакет {idx+1}/{total}] Готово: {_brief_operation(item)} — {_batch_payload_summary(payload,child_op)[:500]}")
+                return {"index":idx,"status":"error" if failed else "completed","command":item,"payload":payload}
             except Exception as e:
-                return {"index":idx,"status":"error","error":f"{type(e).__name__}: {e}"}
+                console(f"[Пакет {idx+1}/{total}] Ошибка: {_brief_operation(item)} — {type(e).__name__}: {e}")
+                return {"index":idx,"status":"error","command":item,"error":f"{type(e).__name__}: {e}"}
         with ThreadPoolExecutor(max_workers=min(5,len(commands)),thread_name_prefix="nexora-batch") as pool:
             items=list(pool.map(run_item,enumerate(commands)))
         failed_count=sum(1 for x in items if x.get("status")!="completed")
@@ -696,7 +802,13 @@ def process_running(running):
                         console(f"[РЕЗУЛЬТАТ {task}] "+str(out).strip()[:4000])
                 else:
                     console_task_result(payload,op)
-                    console("[ГОТОВО] Выполнено успешно")
+                    if op=="health":
+                        if payload.get("ready"):
+                            console("[ГОТОВО] Система работает нормально")
+                        else:
+                            console("[ВНИМАНИЕ] Система требует проверки")
+                    else:
+                        console("[ГОТОВО] Выполнено успешно")
         except Exception as e:
             completed=time.time()
             result={"task_id":task,"status":"error","stage":"failed","error":f"{type(e).__name__}: {e}",
