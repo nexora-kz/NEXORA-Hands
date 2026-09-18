@@ -1,6 +1,9 @@
 import json
 import os
+import hashlib
+import threading
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -36,8 +39,21 @@ def powershell_args(command):
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/"data"; PROCESS_DIR=DATA/"processes"; PROCESS_DIR.mkdir(parents=True,exist_ok=True)
 INBOX,OUTBOX=DATA/"inbox",DATA/"outbox"; STATE=DATA/"state.json"
+RESULTS_DIR=DATA/"results"; RESULTS_DIR.mkdir(parents=True,exist_ok=True)
 for p in (INBOX,OUTBOX): p.mkdir(parents=True,exist_ok=True)
 DEFAULT_MAX_PARALLEL_COMMANDS=5
+DEFAULT_INLINE_RESULT_BYTES=65536
+EXECUTOR_STARTED_AT=time.time()
+METRICS_LOCK=threading.Lock()
+RUNTIME_METRICS={
+    "executor_started_at":EXECUTOR_STARTED_AT,
+    "last_started_at":None,
+    "last_completed_at":None,
+    "last_task_id":"",
+    "last_operation":"",
+    "completed_count":0,
+    "failed_count":0,
+}
 
 def max_parallel_commands():
     value=os.environ.get("NEXORA_HANDS_MAX_PARALLEL")
@@ -70,15 +86,144 @@ def sanitize_transport_value(value):
         return [sanitize_transport_value(v) for v in value]
     return value
 
+def diagnostic_mode():
+    return str(os.environ.get("NEXORA_HANDS_DIAGNOSTIC") or "").strip().lower() in ("1","true","yes","on")
+
+SUPPORTED_OPERATIONS={
+    "shell":"PowerShell command",
+    "read_file":"Read a UTF-8 text file",
+    "write_file":"Write a UTF-8 text file",
+    "list_directory":"List directory entries",
+    "delete":"Delete file or directory",
+    "mkdir":"Create directory",
+    "copy":"Copy file",
+    "move":"Move file",
+    "exists":"Check path existence",
+    "stat":"Read file metadata",
+    "read_file_chunk":"Read text file chunk",
+    "search_files":"Search files by name pattern",
+    "read_multiple_files":"Read multiple text files",
+    "get_file_info":"Read detailed file metadata",
+    "read_process_output":"Read managed process output",
+    "interact_with_process":"Send input to managed process",
+    "list_sessions":"List managed sessions",
+    "kill_process":"Stop a managed process",
+    "get_config":"Read local Hands config",
+    "set_config_value":"Set local Hands config value",
+    "move_file":"Move file alias",
+    "start_search":"Search text across files",
+    "get_more_search_results":"Page search results",
+    "stop_search":"Stop search session",
+    "edit_block":"Exact text replacement",
+    "write_pdf":"Write simple PDF",
+    "get_prompts":"List built-in prompts",
+    "process_list":"List Windows processes",
+    "session_start":"Start interactive session",
+    "session_send":"Send session input",
+    "session_read":"Read session output",
+    "session_stop":"Stop session",
+    "process_start":"Start background process",
+    "process_wait":"Wait for background process",
+    "process_stop":"Stop background process",
+    "system_info":"System information",
+    "system_resources":"System resources",
+    "environment":"Environment variable names/selected values",
+    "get_capabilities":"List Hands operations and runtime limits",
+    "health":"Executor/transport health snapshot",
+    "local_queue":"Local inbox/running/outbox queue snapshot",
+}
+
+def _metrics_snapshot():
+    with METRICS_LOCK:
+        return dict(RUNTIME_METRICS)
+
+def _update_metrics(**kw):
+    with METRICS_LOCK:
+        RUNTIME_METRICS.update(kw)
+
+def _json_state(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except Exception:
+        return {}
+
+def health_snapshot():
+    now=time.time()
+    executor=_json_state(STATE)
+    channel=_json_state(DATA/"supabase_channel_state.json")
+    executor_age=max(0.0,now-float(executor.get("updated_at") or 0)) if executor.get("updated_at") else None
+    heartbeat_age=max(0.0,now-float(channel.get("heartbeat_at") or 0)) if channel.get("heartbeat_at") else None
+    executor_online=executor_age is not None and executor_age<=15.0
+    transport_online=bool(channel.get("heartbeat_ok")) and heartbeat_age is not None and heartbeat_age<=45.0
+    queue_stalled=bool(channel.get("queue_stalled"))
+    return {
+        "transport_online":transport_online,
+        "executor_online":executor_online,
+        "ready":bool(transport_online and executor_online and not queue_stalled),
+        "queue_stalled":queue_stalled,
+        "transport_status":channel.get("status"),
+        "executor_status":executor.get("status"),
+        "executor_pid":executor.get("pid"),
+        "executor_active_count":executor.get("active_count",0),
+        "executor_active_tasks":executor.get("active_tasks",[]),
+        "max_parallel_commands":executor.get("max_parallel_commands",max_parallel_commands()),
+        "last_claim_at":channel.get("last_claim_at"),
+        "last_completed_at":channel.get("last_completed_at") or executor.get("last_completed_at"),
+        "last_started_at":executor.get("last_started_at"),
+        "executor_state_age_seconds":executor_age,
+        "transport_heartbeat_age_seconds":heartbeat_age,
+        "result_submit_errors":channel.get("result_submit_errors") or {},
+    }
+
+def _safe_artifact_name(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+","_",str(value or "result"))[:120] or "result"
+
+def _store_large_text(task_id,key,text):
+    safe_task=_safe_artifact_name(task_id)
+    safe_key=_safe_artifact_name(key)
+    path=RESULTS_DIR/f"{safe_task}.{safe_key}.txt"
+    path.write_text(text,encoding="utf-8",errors="replace")
+    raw=path.read_bytes()
+    return {
+        "path":str(path),
+        "bytes":len(raw),
+        "sha256":hashlib.sha256(raw).hexdigest(),
+    }
+
+def compact_payload(task_id,payload,limit=DEFAULT_INLINE_RESULT_BYTES):
+    if not isinstance(payload,dict):
+        return payload
+    out=dict(payload)
+    large={}
+    for key,value in list(out.items()):
+        if not isinstance(value,str):
+            continue
+        raw=value.encode("utf-8","replace")
+        if len(raw)<=limit:
+            continue
+        meta=_store_large_text(task_id,key,value)
+        preview_chars=12000
+        tail_chars=2000
+        preview=value[:preview_chars]
+        if len(value)>preview_chars+tail_chars:
+            preview += "\\n... [FULL OUTPUT SAVED LOCALLY] ...\\n" + value[-tail_chars:]
+        out[key]=preview
+        large[key]=meta
+    if large:
+        out["large_outputs"]=large
+        out["output_truncated"]=True
+    return out
+
 def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
     tasks=list(active_tasks or [])
+    metrics=_metrics_snapshot()
     payload=sanitize_transport_value({"name":"NEXORA Hands","status":status,"pid":os.getpid(),"task_id":task_id,"error":error,
              "active_tasks":tasks,"active_count":len(tasks),
-             "max_parallel_commands":int(max_parallel or max_parallel_commands()),"updated_at":time.time()})
+             "max_parallel_commands":int(max_parallel or max_parallel_commands()),"updated_at":time.time(),**metrics})
     tmp=STATE.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding="utf-8")
     os.replace(tmp,STATE)
-OP_RU={"shell":"PowerShell","read_file":"\u0427\u0442\u0435\u043d\u0438\u0435 \u0444\u0430\u0439\u043b\u0430","write_file":"\u0417\u0430\u043f\u0438\u0441\u044c \u0444\u0430\u0439\u043b\u0430","list_directory":"\u041f\u0440\u043e\u0441\u043c\u043e\u0442\u0440 \u043f\u0430\u043f\u043a\u0438","copy":"\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435","move":"\u041f\u0435\u0440\u0435\u043c\u0435\u0449\u0435\u043d\u0438\u0435","delete":"\u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435","process_list":"\u0421\u043f\u0438\u0441\u043e\u043a \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u043e\u0432","process_start":"\u0417\u0430\u043f\u0443\u0441\u043a \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430","process_wait":"\u041e\u0436\u0438\u0434\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0430","system_info":"\u0418\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u044f \u043e \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0435","system_resources":"\u0420\u0435\u0441\u0443\u0440\u0441\u044b \u043a\u043e\u043c\u043f\u044c\u044e\u0442\u0435\u0440\u0430","start_search":"\u041f\u043e\u0438\u0441\u043a \u0444\u0430\u0439\u043b\u043e\u0432"}
+OP_RU={"shell":"PowerShell","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","delete":"Удаление","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь"}
 def console(text):
     print(sanitize_transport_value(str(text)), flush=True)
 def safe_command_preview(value):
@@ -94,6 +239,22 @@ def safe_command_preview(value):
     return text if len(text)<=500 else text[:500]+"... [TRUNCATED]"
 def execute(c):
     op=str(c.get("operation") or c.get("type") or "").strip().lower()
+    if op=="get_capabilities":
+        return {
+            "operations":SUPPORTED_OPERATIONS,
+            "operation_names":sorted(SUPPORTED_OPERATIONS),
+            "max_parallel_commands":max_parallel_commands(),
+            "inline_result_bytes":DEFAULT_INLINE_RESULT_BYTES,
+            "diagnostic_console":diagnostic_mode(),
+        }
+    if op=="health":
+        return health_snapshot()
+    if op=="local_queue":
+        inbox=[p.stem for p in sorted(INBOX.glob("*.json"))]
+        running=[p.stem for p in sorted(INBOX.glob("*.running"))]
+        outbox=[p.stem for p in sorted(OUTBOX.glob("*.json"))]
+        return {"queued_local":inbox,"running_local":running,"pending_results":outbox,
+                "counts":{"queued_local":len(inbox),"running_local":len(running),"pending_results":len(outbox)}}
     if op=="shell":
         cmd=str(c.get("command") or "")
         if not cmd: raise ValueError("shell command is empty")
@@ -317,7 +478,8 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         names=c.get("names")
         if names is None: return {"count":len(os.environ),"names":sorted(os.environ.keys())}
         return {"values":{str(n):os.environ.get(str(n)) for n in names}}
-    raise ValueError(f"unsupported operation: {op}")
+    supported=", ".join(sorted(SUPPORTED_OPERATIONS))
+    raise ValueError(f"unsupported operation: {op or '<empty>'}. supported operations: {supported}")
 def recover_interrupted_tasks():
     recovered=[]
     for running in sorted(INBOX.glob("*.running")):
@@ -339,28 +501,53 @@ def recover_interrupted_tasks():
 
 def process_running(running):
     task=running.stem
+    started=time.time()
+    op=""
+    title="Задача"
     try:
         c=json.loads(running.read_text(encoding="utf-8-sig"))
         task=str(c.get("task_id") or task)
         op=str(c.get("operation") or c.get("type") or "").strip().lower()
-        title=OP_RU.get(op,op or "\u0417\u0430\u0434\u0430\u0447\u0430")
-        console(f"\n[\u0417\u0410\u0414\u0410\u0427\u0410 {task}] {title}")
-        if op=="shell":
-            console(f"[\u041a\u041e\u041c\u0410\u041d\u0414\u0410 {task}] "+safe_command_preview(c.get("command")))
-        console(f"[\u0412\u042b\u041f\u041e\u041b\u041d\u042f\u0415\u0422\u0421\u042f {task}]")
+        title=OP_RU.get(op,op or "Задача")
+        _update_metrics(last_started_at=started,last_task_id=task,last_operation=op)
+        if diagnostic_mode():
+            console(f"\\n[ЗАДАЧА {task}] {title}")
+            if op=="shell":
+                console(f"[КОМАНДА {task}] "+safe_command_preview(c.get("command")))
+            console(f"[ВЫПОЛНЯЕТСЯ {task}]")
+        else:
+            console(f"\\n[{title}]")
         try:
-            result={"task_id":task,"status":"completed","payload":execute(c)}
-            console(f"[\u0413\u041e\u0422\u041e\u0412\u041e {task}] \u0412\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e \u0443\u0441\u043f\u0435\u0448\u043d\u043e")
-            payload=result.get("payload") or {}
-            out=payload.get("stdout") if isinstance(payload,dict) else None
-            if out and str(out).strip():
-                console(f"[\u0420\u0415\u0417\u0423\u041b\u042c\u0422\u0410\u0422 {task}] "+str(out).strip())
+            payload=compact_payload(task,execute(c))
+            completed=time.time()
+            result={"task_id":task,"status":"completed","stage":"completed","payload":payload,
+                    "timing":{"started_at":started,"completed_at":completed,
+                              "duration_ms":int((completed-started)*1000)}}
+            metrics=_metrics_snapshot()
+            _update_metrics(last_completed_at=completed,completed_count=int(metrics.get("completed_count") or 0)+1)
+            if diagnostic_mode():
+                console(f"[ГОТОВО {task}] Выполнено успешно")
+                out=payload.get("stdout") if isinstance(payload,dict) else None
+                if out and str(out).strip():
+                    console(f"[РЕЗУЛЬТАТ {task}] "+str(out).strip())
+            else:
+                console("[ГОТОВО] Выполнено успешно")
         except Exception as e:
-            result={"task_id":task,"status":"error","error":f"{type(e).__name__}: {e}"}
-            console(f"[\u041e\u0428\u0418\u0411\u041a\u0410 {task}] "+str(e))
+            completed=time.time()
+            result={"task_id":task,"status":"error","stage":"failed","error":f"{type(e).__name__}: {e}",
+                    "timing":{"started_at":started,"completed_at":completed,
+                              "duration_ms":int((completed-started)*1000)}}
+            metrics=_metrics_snapshot()
+            _update_metrics(last_completed_at=completed,failed_count=int(metrics.get("failed_count") or 0)+1)
+            console((f"[ОШИБКА {task}] " if diagnostic_mode() else "[ОШИБКА] ")+str(e))
     except Exception as e:
-        result={"task_id":task,"status":"error","error":f"{type(e).__name__}: {e}"}
-        console(f"[\u041e\u0428\u0418\u0411\u041a\u0410 {task}] "+str(e))
+        completed=time.time()
+        result={"task_id":task,"status":"error","stage":"failed","error":f"{type(e).__name__}: {e}",
+                "timing":{"started_at":started,"completed_at":completed,
+                          "duration_ms":int((completed-started)*1000)}}
+        metrics=_metrics_snapshot()
+        _update_metrics(last_completed_at=completed,failed_count=int(metrics.get("failed_count") or 0)+1)
+        console((f"[ОШИБКА {task}] " if diagnostic_mode() else "[ОШИБКА] ")+str(e))
     result=sanitize_transport_value(result)
     result_file=OUTBOX/f"{task}.json"
     tmp=result_file.with_suffix(".tmp")
@@ -378,6 +565,7 @@ def main():
     last_state=None
     with ThreadPoolExecutor(max_workers=limit,thread_name_prefix="nexora-hands") as pool:
         active={}
+        last_heartbeat_write=0.0
         while True:
             for future in list(active):
                 if not future.done():
@@ -408,9 +596,11 @@ def main():
                     capacity-=1
             tasks=sorted(active.values())
             current=("executing" if tasks else "running",tuple(tasks))
-            if current!=last_state:
+            now=time.time()
+            if current!=last_state or now-last_heartbeat_write>=2.0:
                 state(current[0],task_id=(tasks[0] if tasks else ""),active_tasks=tasks,max_parallel=limit)
                 last_state=current
+                last_heartbeat_write=now
             time.sleep(.1)
 
 if __name__=="__main__": main()

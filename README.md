@@ -43,3 +43,11 @@ Known aliases:
 Every other worker automatically receives a stable fallback name in the form NEXORA-PC-XXXXXXXX, derived from its persistent worker ID.
 
 hands_execute.worker_id accepts either the real worker ID or any returned friendly name/alias. This lets a chat say, for example, work only on NEXORA-LAPTOP without copying the UUID.
+
+## Health and reliability
+
+The Windows runtime keeps transport and executor health separate. A server heartbeat is refreshed only while the local executor state is fresh. The launcher watchdog restarts a dead/stale executor or transport automatically.
+
+The executor supports lightweight `health`, `get_capabilities`, and `local_queue` operations. Large text results are saved in `data/results`; the chat receives a bounded preview plus local path, byte size, and SHA-256.
+
+Normal console output is intentionally compact and does not show internal task IDs. Set `NEXORA_HANDS_DIAGNOSTIC=1` before launch to enable task IDs, command previews, and full diagnostic console output.

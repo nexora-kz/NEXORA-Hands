@@ -23,6 +23,52 @@ INBOX.mkdir(parents=True, exist_ok=True)
 OUTBOX.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_MAX_PARALLEL_COMMANDS = 5
+CHANNEL_STARTED_AT=time.time()
+CHANNEL_METRICS={
+    "channel_started_at":CHANNEL_STARTED_AT,
+    "last_claim_at":None,
+    "last_completed_at":None,
+    "last_progress_at":time.time(),
+}
+
+def channel_progress(kind=None):
+    now=time.time()
+    CHANNEL_METRICS["last_progress_at"]=now
+    if kind=="claim": CHANNEL_METRICS["last_claim_at"]=now
+    if kind=="completed": CHANNEL_METRICS["last_completed_at"]=now
+
+def executor_state():
+    path=DATA/"state.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return {}
+
+def health_fields(active_count=0):
+    now=time.time()
+    ex=executor_state()
+    ex_updated=float(ex.get("updated_at") or 0)
+    ex_age=max(0.0,now-ex_updated) if ex_updated else None
+    executor_online=ex_age is not None and ex_age<=15.0
+    executor_active=int(ex.get("active_count") or 0)
+    last_progress=float(CHANNEL_METRICS.get("last_progress_at") or CHANNEL_STARTED_AT)
+    stalled=bool(active_count) and (
+        not executor_online or
+        (executor_active==0 and now-last_progress>30.0)
+    )
+    return {
+        **CHANNEL_METRICS,
+        "transport_online":True,
+        "executor_online":executor_online,
+        "executor_status":ex.get("status"),
+        "executor_pid":ex.get("pid"),
+        "executor_active_count":executor_active,
+        "executor_active_tasks":ex.get("active_tasks") or [],
+        "executor_updated_at":ex.get("updated_at"),
+        "executor_state_age_seconds":ex_age,
+        "queue_stalled":stalled,
+        "ready":bool(executor_online and not stalled),
+    }
 
 def sanitize_transport_value(value):
     """Recursively remove PostgreSQL-incompatible U+0000 from JSON payloads."""
@@ -103,7 +149,11 @@ def save_state(**kw):
     if STATE.exists():
         try: state = json.loads(STATE.read_text(encoding="utf-8"))
         except Exception: pass
+    active_count=int(kw.get("active_count") or 0)
+    state.update(sanitize_transport_value(health_fields(active_count)))
     state.update(sanitize_transport_value(kw))
+    state["transport_online"]=bool(state.get("heartbeat_ok"))
+    state["ready"]=bool(state.get("transport_online") and state.get("executor_online") and not state.get("queue_stalled"))
     STATE.write_text(json.dumps(sanitize_transport_value(state), ensure_ascii=False, indent=2), encoding="utf-8")
 
 def claim(c, worker):
@@ -115,6 +165,8 @@ def claim(c, worker):
     body = {"status": "claimed", "claimed_at": datetime.now(timezone.utc).isoformat(), "worker_id": worker, "lease_token": lease_token}
     q2 = urllib.parse.urlencode({"id": "eq." + str(cmd["id"]), "status": "eq.queued"})
     updated = request("PATCH", "/hands_commands?" + q2, body)
+    if updated:
+        channel_progress("claim")
     return updated[0] if updated else None
 
 def local_active(task_id):
@@ -263,6 +315,7 @@ def dispatch_claimed(cmd):
     tmp=target.with_suffix(".tmp")
     tmp.write_text(json.dumps(local_command,ensure_ascii=False),encoding="utf-8")
     os.replace(tmp,target)
+    channel_progress()
     return task_id
 
 def main():
@@ -285,8 +338,12 @@ def main():
         try:
             now=time.monotonic()
             if now>=next_heartbeat:
-                ok=heartbeat(c,worker)
-                save_state(status="heartbeat" if ok else "heartbeat_failed",worker_id=worker,
+                # A server "online" heartbeat now requires a live local executor too.
+                # If hands.py is dead/stale, do not refresh last_seen_at; the worker
+                # will naturally disappear from online listings until watchdog recovery.
+                executor_ok=bool(health_fields(len(active)).get("executor_online"))
+                ok=heartbeat(c,worker) if executor_ok else False
+                save_state(status="heartbeat" if ok else ("executor_offline" if not executor_ok else "heartbeat_failed"),worker_id=worker,
                            heartbeat_ok=ok,heartbeat_at=time.time(),
                            max_parallel_commands=limit,active_count=len(active),active_tasks=sorted(active))
                 next_heartbeat=now+heartbeat_seconds
@@ -307,6 +364,7 @@ def main():
                             result_file.unlink(missing_ok=True)
                             save_state(status="stale_result_discarded",worker_id=worker,task_id=task_id)
                         active.pop(task_id,None)
+                        channel_progress("completed")
                         continue
 
                     now=time.monotonic()
@@ -315,6 +373,7 @@ def main():
                                       {"task_id":task_id,"status":"timeout_waiting_result"},
                                       meta["lease_token"],"local result timeout")
                         active.pop(task_id,None)
+                        channel_progress("completed")
                         continue
 
                     if now>=meta["lease_refresh_at"]:
