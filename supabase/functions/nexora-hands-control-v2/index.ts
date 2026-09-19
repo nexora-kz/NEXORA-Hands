@@ -66,7 +66,7 @@ Deno.serve(async(req:Request)=>{
       const commandWithTimeout={...command,timeout_seconds:timeout}
       const {data:queued,error:qerr}=await db.rpc("hands_control_command",{p_task_id:task_id,p_worker_id:worker_id,p_command:commandWithTimeout})
       if(qerr)throw qerr
-      const deadline=Date.now()+timeout*1000
+      const deadline=Date.now()+(timeout+30)*1000
       let latest=null
       while(Date.now()<deadline){
         const {data,error}=await db.rpc("hands_command_status",{p_task_id:task_id})

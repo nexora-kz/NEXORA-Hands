@@ -132,7 +132,7 @@ Deno.serve(pipeline([withOAuthProtectedResource(), withSupabase({ auth: 'user' }
       const effectiveTimeout = Math.max(5, Math.min(600, Number(timeoutSeconds) || 300))
       const commandWithTimeout = { ...(command || {}), timeout_seconds: effectiveTimeout }
       const task_id = await submitOnly(workerId, commandWithTimeout)
-      const deadline = Date.now() + effectiveTimeout * 1000
+      const deadline = Date.now() + (effectiveTimeout + 30) * 1000
       let latest: any = null
       while (Date.now() < deadline) {
         const r = await supabase.rpc('hands_mcp_status', { p_task_id: task_id })
