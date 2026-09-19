@@ -9,16 +9,14 @@ const CONTROL_TOKEN = Deno.env.get('NEXORA_TRANSPORT_TOKEN') || ''
 const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 
 
-const KNOWN_WORKER_NAMES: Record<string, { name: string; aliases: string[] }> = {
-  'nexora-hands-bf69a451a7744955bf7b63639dd3b06e': {
-    name: 'NEXORA-LAPTOP',
-    aliases: ['LAPTOP-PJ1VRBPC'],
-  },
-  'nexora-hands-7e8490ee8a03424b9026e4d7f8d45d37': {
-    name: 'NEXORA-DESKTOP',
-    aliases: ['DESKTOP-PQU4USG'],
-  },
-}
+const KNOWN_WORKER_NAMES: Record<string, { name: string; aliases: string[] }> = (() => {
+  try {
+    const parsed = JSON.parse(Deno.env.get('NEXORA_HANDS_WORKER_NAMES') || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+})()
 
 function automaticWorkerName(workerId: string) {
   const compact = String(workerId || '').replace(/^nexora-hands-/i, '').replace(/[^a-z0-9]/gi, '')

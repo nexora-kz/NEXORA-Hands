@@ -1,53 +1,79 @@
 # NEXORA Hands
 
-Standalone Windows remote-control software for NEXORA.
+NEXORA Hands — локальный исполнитель команд для Windows, связанный с серверной частью NEXORA через Supabase.
 
-## Working flow
+## Запуск на новом ПК
 
-**Launch page → NEXORA-Hands.cmd → automatic runtime setup → NEXORA Hands → NEXORA control plane → Windows PC**
+Пользовательский сценарий остаётся максимально простым:
 
-The end-user does not need Git or Remote Desktop Commander.
+1. Открыть публичную страницу launch.html.
+2. Скачать NEXORA-Hands.cmd.
+3. Запустить файл.
+4. Установщик при необходимости автоматически установит Python.
+5. NEXORA Hands зарегистрирует ПК и запустит локальный исполнитель.
+6. При успешном подключении появится сообщение NEXORA Hands - connected.
 
-### On a new Windows PC
+Git и Node.js для обычной работы NEXORA Hands не требуются.
 
-1. Open the public launch page.
-2. Download `NEXORA-Hands.cmd`.
-3. Run the downloaded file.
-4. The visible PowerShell console installs missing runtime components automatically.
-5. NEXORA Hands starts and registers this PC as a worker through the NEXORA transport.
-6. The same PowerShell window remains the live local runtime console.
+## Архитектура
 
-Node.js and Python are installed automatically when they are missing. Git is not required.
+ChatGPT / Control Center → Supabase → NEXORA Hands → Windows
 
-The worker receives commands through the NEXORA control plane and executes them locally on Windows.
+Роли компонентов:
+
+- GitHub — исходный код, документация, история изменений и доставка runtime.
+- Локальный Windows-ПК — выполнение команд.
+- Supabase — транспорт команд, результаты, heartbeat и серверная логика.
+- MCP NEXORA Hands — интерфейс управления Hands из ChatGPT.
+
+После установки основной runtime находится локально в %LOCALAPPDATA%\NEXORA\Hands.
+
+## Runtime
+
+Основные локальные компоненты:
+
+- app/hands.py — исполнитель операций Windows.
+- app/supabase_channel.py — транспорт между локальным исполнителем и Supabase.
+- start.ps1 — запуск и watchdog.
+- stop.ps1 — штатная остановка.
+
+Runtime поддерживает до пяти параллельных задач. Для настоящей параллельной отправки через MCP поддерживается асинхронная постановка задач.
+
+## Надёжность
+
+Hands раздельно контролирует транспорт, executor, heartbeat, очередь задач, lease token, stale-claim recovery и атомарную отправку результата.
+
+При timeout синхронной shell-задачи завершается дерево процессов только этой задачи. Посторонние процессы Windows не затрагиваются.
+
+Крупные текстовые результаты сохраняются локально в data/results, а сервер получает ограниченный preview, путь, размер и SHA-256.
+
+Краткая история изменений состояния транспорта и heartbeat записывается в локальный rolling-log data/logs/channel_events.jsonl.
+
+## Имена компьютеров
+
+Сервер может задавать удобные имена и aliases через защищённую конфигурацию Supabase. Эти значения не хранятся в публичном исходном коде.
+
+Если отдельное имя не задано, используется универсальный формат NEXORA-PC-XXXXXXXX.
 
 ## Control Center
 
-`control.html` is the browser-based NEXORA Hands Control Center. It discovers registered Hands workers, lets the operator select a PC, sends supported Hands operations, and displays execution results.
+control.html — браузерный интерфейс управления зарегистрированными Hands workers.
 
-The Control Center uses the existing Supabase-backed Hands control layer. It does not use OpenAI, ChatGPT, MCP, Remote Desktop Commander, or a fourth worker transport.
+Control Center использует существующий Supabase control layer и не требует OpenAI или MCP для выполнения команд.
 
-## Architecture
+## Диагностика
 
-**Control Center → Hands control API → Supabase Hands control layer → Hands worker → Windows PC**
+Основные операции диагностики:
 
-The worker and launcher are standalone components and do not depend on OpenAI services.
-## Friendly worker names
+- health — состояние executor и транспорта;
+- get_capabilities — список поддерживаемых операций;
+- local_queue — локальная очередь;
+- cleanup_preview — только показывает старые локальные технические файлы, ничего не удаляя.
 
-hands_list_workers returns a permanent friendly name for every PC.
+Для расширенного локального вывода можно включить NEXORA_HANDS_DIAGNOSTIC=1.
 
-Known aliases:
-- NEXORA-LAPTOP -> LAPTOP-PJ1VRBPC
-- NEXORA-DESKTOP -> DESKTOP-PQU4USG
+## Разработка
 
-Every other worker automatically receives a stable fallback name in the form NEXORA-PC-XXXXXXXX, derived from its persistent worker ID.
+Основной каталог разработки: D:\GitHub\NEXORA-Hands.
 
-hands_execute.worker_id accepts either the real worker ID or any returned friendly name/alias. This lets a chat say, for example, work only on NEXORA-LAPTOP without copying the UUID.
-
-## Health and reliability
-
-The Windows runtime keeps transport and executor health separate. A server heartbeat is refreshed only while the local executor state is fresh. The launcher watchdog restarts a dead/stale executor or transport automatically.
-
-The executor supports lightweight `health`, `get_capabilities`, and `local_queue` operations. Large text results are saved in `data/results`; the chat receives a bounded preview plus local path, byte size, and SHA-256.
-
-Normal console output is intentionally compact and does not show internal task IDs. Set `NEXORA_HANDS_DIAGNOSTIC=1` before launch to enable task IDs, command previews, and full diagnostic console output.
+Изменения сначала проверяются в репозитории, затем фиксируются commit и только после тестов используются для обновления runtime и серверных компонентов.

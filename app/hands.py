@@ -37,6 +37,46 @@ def powershell_args(command):
     encoded=base64.b64encode(wrapped.encode("utf-16le")).decode("ascii")
     return ["powershell.exe","-NoProfile","-NonInteractive","-OutputFormat","Text","-EncodedCommand",encoded]
 
+def _kill_process_tree(pid):
+    """Terminate one Windows process tree without touching unrelated processes."""
+    try:
+        subprocess.run(
+            ["taskkill.exe", "/PID", str(int(pid)), "/T", "/F"],
+            capture_output=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        pass
+
+def _run_powershell(command, timeout_seconds=300):
+    """Run PowerShell and guarantee cleanup of its process tree on timeout."""
+    timeout=max(1,min(600,int(timeout_seconds or 300)))
+    p=subprocess.Popen(
+        powershell_args(command),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    )
+    try:
+        stdout,stderr=p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        stdout=e.output or ""
+        stderr=e.stderr or ""
+        _kill_process_tree(p.pid)
+        try:
+            tail_out,tail_err=p.communicate(timeout=5)
+            stdout=(stdout or "")+(tail_out or "")
+            stderr=(stderr or "")+(tail_err or "")
+        except Exception:
+            try: p.kill()
+            except Exception: pass
+        raise subprocess.TimeoutExpired(p.args,timeout,output=stdout,stderr=stderr)
+    return subprocess.CompletedProcess(p.args,p.returncode,stdout,stderr)
+
 def normalize_powershell_stream(text):
     text=str(text or "")
     if "#< CLIXML" not in text:
@@ -151,6 +191,7 @@ SUPPORTED_OPERATIONS={
     "get_capabilities":"List Hands operations and runtime limits",
     "health":"Executor/transport health snapshot",
     "local_queue":"Local inbox/running/outbox queue snapshot",
+    "cleanup_preview":"Preview old local Hands artifacts without deleting them",
 }
 
 def _metrics_snapshot():
@@ -254,7 +295,7 @@ def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
                 time.sleep(0.05*(attempt+1))
         tmp.unlink(missing_ok=True)
         raise last_error
-OP_RU={"shell":"Команда","batch":"Пакетное выполнение","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","move_file":"Перемещение","delete":"Удаление","mkdir":"Создание папки","exists":"Проверка пути","stat":"Сведения о файле","read_file_chunk":"Чтение фрагмента файла","get_file_info":"Сведения о файле","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь"}
+OP_RU={"shell":"Команда","batch":"Пакетное выполнение","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","move_file":"Перемещение","delete":"Удаление","mkdir":"Создание папки","exists":"Проверка пути","stat":"Сведения о файле","read_file_chunk":"Чтение фрагмента файла","get_file_info":"Сведения о файле","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь","cleanup_preview":"Предпросмотр очистки"}
 def console(text):
     print(sanitize_transport_value(str(text)), flush=True)
 def safe_command_preview(value):
@@ -466,6 +507,32 @@ def execute(c):
             "inline_result_bytes":DEFAULT_INLINE_RESULT_BYTES,
             "diagnostic_console":diagnostic_mode(),
         }
+    if op=="cleanup_preview":
+        hours=max(1,min(8760,int(c.get("older_than_hours") or 168)))
+        cutoff=time.time()-hours*3600
+        executor=_json_state(STATE)
+        active=set(str(x) for x in (executor.get("active_tasks") or []) if x)
+        candidates=[]
+        def add_candidate(path,kind):
+            try: stat=path.stat()
+            except OSError: return
+            if stat.st_mtime>=cutoff: return
+            name=path.name
+            if any(task and task in name for task in active): return
+            candidates.append({"kind":kind,"path":str(path),"bytes":stat.st_size,"modified":stat.st_mtime})
+        for path in OUTBOX.glob("*.json"): add_candidate(path,"outbox")
+        for path in RESULTS_DIR.iterdir():
+            if path.is_file(): add_candidate(path,"result")
+        for path in PROCESS_DIR.iterdir():
+            if not path.is_file(): continue
+            if path.suffix.lower()==".json":
+                try:
+                    meta=json.loads(path.read_text(encoding="utf-8",errors="replace"))
+                    if meta.get("exitcode") is None and meta.get("pid") not in (None,"","pending"): continue
+                except Exception: pass
+            add_candidate(path,"process")
+        candidates.sort(key=lambda x:(x["modified"],x["path"]))
+        return {"preview_only":True,"older_than_hours":hours,"count":len(candidates),"bytes":sum(int(x["bytes"]) for x in candidates),"items":candidates[:500],"truncated":len(candidates)>500}
     if op=="health":
         return health_snapshot()
     if op=="local_queue":
@@ -518,7 +585,7 @@ def execute(c):
         cmd=str(c.get("command") or "")
         if not cmd: raise ValueError("shell command is empty")
         wrapped="$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "+cmd
-        r=subprocess.run(powershell_args(wrapped),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=int(c.get("timeout_seconds") or 300))
+        r=_run_powershell(wrapped,c.get("timeout_seconds") or 300)
         return {"returncode":int(r.returncode),"stdout":normalize_powershell_stream(r.stdout or ""),"stderr":normalize_powershell_stream(r.stderr or ""),"failed":int(r.returncode)!=0}
     if op=="read_file":
         p=Path(str(c["path"])).resolve(); return {"path":str(p),"content":p.read_text(encoding="utf-8",errors="replace")}

@@ -19,8 +19,12 @@ DEFAULT_CONFIG = ROOT / "app" / "hands_supabase_config.json"
 PERSISTENT_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "NEXORA" / "Hands"
 PERSISTENT_CONFIG = PERSISTENT_ROOT / "data" / "hands_supabase_config.json"
 STATE = DATA / "supabase_channel_state.json"
+LOG_DIR = DATA / "logs"
+EVENT_LOG = LOG_DIR / "channel_events.jsonl"
 INBOX.mkdir(parents=True, exist_ok=True)
 OUTBOX.mkdir(parents=True, exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+_LAST_EVENT_SIGNATURE=None
 
 DEFAULT_MAX_PARALLEL_COMMANDS = 5
 CHANNEL_STARTED_AT=time.time()
@@ -144,6 +148,18 @@ def heartbeat(c, worker):
         return bool(next(iter(rows[0].values())))
     return bool(rows)
 
+def _append_event(event, **fields):
+    record={"ts":datetime.now(timezone.utc).isoformat(),"event":event,**sanitize_transport_value(fields)}
+    try:
+        if EVENT_LOG.exists() and EVENT_LOG.stat().st_size>1024*1024:
+            rotated=EVENT_LOG.with_suffix(".jsonl.1")
+            rotated.unlink(missing_ok=True)
+            EVENT_LOG.replace(rotated)
+        with EVENT_LOG.open("a",encoding="utf-8") as f:
+            f.write(json.dumps(record,ensure_ascii=False)+"\n")
+    except Exception:
+        pass
+
 def save_state(**kw):
     state = {}
     if STATE.exists():
@@ -155,6 +171,25 @@ def save_state(**kw):
     state["transport_online"]=bool(state.get("heartbeat_ok"))
     state["ready"]=bool(state.get("transport_online") and state.get("executor_online") and not state.get("queue_stalled"))
     STATE.write_text(json.dumps(sanitize_transport_value(state), ensure_ascii=False, indent=2), encoding="utf-8")
+    global _LAST_EVENT_SIGNATURE
+    signature=(
+        state.get("status"),
+        bool(state.get("heartbeat_ok")),
+        bool(state.get("executor_online")),
+        bool(state.get("queue_stalled")),
+        str(state.get("error") or ""),
+    )
+    if signature!=_LAST_EVENT_SIGNATURE:
+        _LAST_EVENT_SIGNATURE=signature
+        _append_event(
+            "state_change",
+            status=state.get("status"),
+            heartbeat_ok=bool(state.get("heartbeat_ok")),
+            executor_online=bool(state.get("executor_online")),
+            queue_stalled=bool(state.get("queue_stalled")),
+            ready=bool(state.get("ready")),
+            error=str(state.get("error") or ""),
+        )
 
 def claim(c, worker):
     q = urllib.parse.urlencode({"channel_token": "eq." + token(c), "worker_id": "eq." + worker, "status": "eq.queued", "order": "created_at.asc", "limit": "1"})
@@ -264,12 +299,22 @@ def claimed_rows(c, worker):
     })
     return request("GET","/hands_commands?"+q) or []
 
-def active_entry(cmd, timeout_seconds=300):
+def command_timeout_seconds(cmd, default=300):
+    command=cmd.get("command") if isinstance(cmd,dict) else None
+    try:
+        value=float((command or {}).get("timeout_seconds") or default)
+    except Exception:
+        value=float(default)
+    return max(5.0,min(600.0,value))
+
+def active_entry(cmd, timeout_seconds=None):
+    execution_timeout=command_timeout_seconds(cmd,300) if timeout_seconds is None else max(5.0,min(600.0,float(timeout_seconds)))
     return {
         "id":cmd.get("id"),
         "task_id":str(cmd.get("task_id") or ""),
         "lease_token":str(cmd.get("lease_token") or ""),
-        "deadline":time.monotonic()+float(timeout_seconds),
+        "execution_timeout_seconds":execution_timeout,
+        "deadline":time.monotonic()+execution_timeout+30.0,
         "lease_refresh_at":0.0,
     }
 
