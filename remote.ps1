@@ -65,7 +65,7 @@ try {
     $startPath = Join-Path $runtimeRoot 'start.ps1'
     $bytes = [IO.File]::ReadAllBytes($startPath)
     if (@($bytes | Where-Object { $_ -ge 128 }).Count -ne 0) { throw 'start.ps1 must be ASCII-only' }
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $startPath -PythonPath $python
+    & $startPath -PythonPath $python
     exit $LASTEXITCODE
 } catch {
     Write-Host 'NEXORA Hands - connection failed.'
