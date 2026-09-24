@@ -74,7 +74,13 @@ try {
     $bytes = [IO.File]::ReadAllBytes($startPath)
     if (@($bytes | Where-Object { $_ -ge 128 }).Count -ne 0) { throw 'start.ps1 must be ASCII-only' }
     & $startPath -PythonPath $python
-    exit $LASTEXITCODE
+    $rc = $LASTEXITCODE
+    if ($rc -ne 0) {
+        $errLog = Join-Path $dataRoot 'logs\channel.stderr.log'
+        $detail = if (Test-Path $errLog) { (Get-Content $errLog -Tail 8 -ErrorAction SilentlyContinue) -join ' | ' } else { 'channel log unavailable' }
+        Write-Host ('NEXORA Hands - runtime failed: ' + $detail)
+    }
+    exit $rc
 } catch {
     Write-Host ('NEXORA Hands - connection failed: ' + $_.Exception.Message)
     exit 1
