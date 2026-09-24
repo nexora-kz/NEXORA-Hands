@@ -54,11 +54,11 @@ try {
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
     $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/main'
     $files = @(
-        @{Url="$rawBase/start.ps1";Path=(Join-Path $runtimeRoot 'start.ps1');Sha256='DAB8C16B9D8FD728085EE0B847668930FBF73976C0431932F4DC23FADDCEE0A5'},
-        @{Url="$rawBase/stop.ps1";Path=(Join-Path $runtimeRoot 'stop.ps1');Sha256='6E94D8594B164A3C8D78DF2A32693C2672CCEE7F6DE70C7E637C3781A52BD360'},
-        @{Url="$rawBase/app/hands.py";Path=(Join-Path $appRoot 'hands.py');Sha256='8F6E4A2E6DC4AB41510527EA3E4E93EA207487D9F6422974F6CB341DE8075197'},
-        @{Url="$rawBase/app/supabase_channel.py";Path=(Join-Path $appRoot 'supabase_channel.py');Sha256='53AC5E530E2FBB692DCF1613A95ED69B56F8B605334303CEC0A819BD5AF36354'},
-        @{Url="$rawBase/app/hands_supabase_config.json";Path=(Join-Path $appRoot 'hands_supabase_config.json');Sha256='B85E4D6B9605134D0A4566BCC7FB8E0D17FED32AA49E5E9E459FE95962EFFBE9'}
+        @{Url="$rawBase/start.ps1";Path=(Join-Path $runtimeRoot 'start.ps1');Sha256='0C149BDA954B0AC70777EB3B80B44A2F4434A944C8915D7FCD69F8CB8A3FCF76'},
+        @{Url="$rawBase/stop.ps1";Path=(Join-Path $runtimeRoot 'stop.ps1');Sha256='64A65E761A41A9DCBBA75706FEA37C4614B944A152B56FF4B6E3F39116733304'},
+        @{Url="$rawBase/app/hands.py";Path=(Join-Path $appRoot 'hands.py');Sha256='E7D0B799D5E09061B4E2789207EF49F9F0447C9C211D4D630B345641041C31D5'},
+        @{Url="$rawBase/app/supabase_channel.py";Path=(Join-Path $appRoot 'supabase_channel.py');Sha256='62BF220D9620DF54DEF474854F83C02B014A5A66B51758A4FF5247578188DB56'},
+        @{Url="$rawBase/app/hands_supabase_config.json";Path=(Join-Path $appRoot 'hands_supabase_config.json');Sha256='435844EAF35BFE270FD41AB9C1706B462F9097A19CAC09DDCC3BFA118001CAEA'}
     )
     foreach ($file in $files) {
         $tmp = "$($file.Path).download"
