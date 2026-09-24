@@ -41,6 +41,14 @@ try {
     }
     if (-not $python) { throw 'Python unavailable' }
     $runtimeRoot = Join-Path $env:LOCALAPPDATA 'NEXORA\Hands'
+    # Stop a previously installed runtime so an old start.ps1 cannot keep the host mutex.
+    $runtimeNeedle = [IO.Path]::GetFullPath($runtimeRoot).ToLowerInvariant()
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.CommandLine -and ($_.Name -match '^(powershell|pwsh|python|pythonw)\.exe$') -and
+        $_.CommandLine.ToLowerInvariant().Contains($runtimeNeedle) -and
+        ($_.CommandLine -match 'start\.ps1|hands\.py|supabase_channel\.py')
+    } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 500
     $dataRoot = Join-Path $runtimeRoot 'data'
     $appRoot = Join-Path $runtimeRoot 'app'
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
