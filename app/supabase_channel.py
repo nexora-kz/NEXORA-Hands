@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import hashlib
+import socket
 from datetime import datetime, timezone
 import json
 import time
@@ -94,13 +95,24 @@ def max_parallel_commands(c):
     except Exception: value = DEFAULT_MAX_PARALLEL_COMMANDS
     return max(1, min(16, value))
 
+def machine_identity():
+    return socket.gethostname().strip().upper()
+
 def cfg():
-    # Reuse persistent machine identity even when launched from %TEMP%.
+    current_machine = machine_identity()
     for source in (CONFIG, PERSISTENT_CONFIG, DEFAULT_CONFIG):
         if not source.exists(): continue
         try:
             value = json.loads(source.read_text(encoding="utf-8-sig"))
-            if value.get("worker_token") or source == DEFAULT_CONFIG: return value
+            if value.get("worker_token"):
+                if str(value.get("machine_identity") or "").upper() == current_machine: return value
+                value["worker_id"] = ""
+                value["worker_token"] = ""
+                value["machine_identity"] = current_machine
+                return value
+            if source == DEFAULT_CONFIG:
+                value["machine_identity"] = current_machine
+                return value
         except Exception: continue
     raise RuntimeError("no usable Hands config")
 
@@ -114,7 +126,7 @@ def register_worker(c):
     worker_id = str(rows.get("worker_id") or "")
     worker_token = str(rows.get("token") or "")
     if not worker_id or not worker_token: raise RuntimeError("worker registration returned empty credentials")
-    c["worker_id"] = worker_id; c["worker_token"] = worker_token; c.pop("channel_phrase", None)
+    c["worker_id"] = worker_id; c["worker_token"] = worker_token; c["machine_identity"] = machine_identity(); c.pop("channel_phrase", None)
     CONFIG.parent.mkdir(parents=True, exist_ok=True)
     CONFIG.write_text(json.dumps(c, ensure_ascii=False, indent=2), encoding="utf-8")
     return c
