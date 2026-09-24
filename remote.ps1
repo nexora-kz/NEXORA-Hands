@@ -76,6 +76,6 @@ try {
     & $startPath -PythonPath $python
     exit $LASTEXITCODE
 } catch {
-    Write-Host 'NEXORA Hands - connection failed.'
+    Write-Host ('NEXORA Hands - connection failed: ' + $_.Exception.Message)
     exit 1
 }
