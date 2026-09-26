@@ -74,7 +74,7 @@ def agent_status():
     return {"root":str(ROOT),"active_slot":active,"release":manifest,"executor_pid":ex.get("pid"),"executor_status":ex.get("status"),"transport_status":ch.get("status"),"heartbeat_ok":ch.get("heartbeat_ok"),"executor_online":ch.get("executor_online"),"queue_stalled":ch.get("queue_stalled"),"uptime_seconds":max(0,time.time()-float(ex.get("executor_started_at") or time.time()))}
 
 def verify_agent():
-    required=["start.ps1","stop.ps1","self-test.ps1","app/hands.py","app/supabase_channel.py","app/hands_supabase_config.json"]
+    required=["start.ps1","stop.ps1","self-test.ps1","app/hands.py","app/supabase_channel.py","app/hands_supabase_config.json","app/agent_control.py"]
     files={}
     ok=True
     for rel in required:
@@ -91,6 +91,22 @@ def verify_agent():
     result={"ok":ok,"checked_at":time.time(),"compile_ok":cp.returncode==0,"compile_error":cp.stderr[-2000:],"files":files,"status":st}
     (DATA/"agent_verify.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     return result
+
+def service_list():
+    ps="Get-Service|Select Name,DisplayName,Status,StartType|ConvertTo-Json -Compress"
+    cp=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",ps],capture_output=True,text=True,encoding="utf-8",errors="replace")
+    if cp.returncode: raise RuntimeError(cp.stderr.strip())
+    rows=json.loads(cp.stdout or "[]")
+    return {"count":len(rows) if isinstance(rows,list) else 1,"items":rows if isinstance(rows,list) else [rows]}
+
+def service_action(name,action):
+    action=str(action).lower(); name=str(name)
+    if action not in ("start","stop","restart"): raise ValueError("action must be start, stop or restart")
+    q=name.replace("'","''")
+    verb={"start":"Start-Service","stop":"Stop-Service","restart":"Restart-Service"}[action]
+    cp=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",f"{verb} -Name '{q}' -ErrorAction Stop"],capture_output=True,text=True,encoding="utf-8",errors="replace")
+    if cp.returncode: raise RuntimeError(cp.stderr.strip())
+    return {"name":name,"action":action,"ok":True}
 
 def start_agent_update(release_sha,mode="update"):
     sha=str(release_sha or "").strip().lower()

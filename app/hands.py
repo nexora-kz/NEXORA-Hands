@@ -537,6 +537,12 @@ def execute(c):
     if op=="process_tree":
         from agent_control import process_tree
         return process_tree()
+    if op=="service_list":
+        from agent_control import service_list
+        return service_list()
+    if op=="service_action":
+        from agent_control import service_action
+        return service_action(c["name"],c["action"])
     if op=="cleanup_preview":
         hours=max(1,min(8760,int(c.get("older_than_hours") or 168)))
         cutoff=time.time()-hours*3600
