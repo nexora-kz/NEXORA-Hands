@@ -51,25 +51,44 @@ try {
     Start-Sleep -Milliseconds 500
     $dataRoot = Join-Path $runtimeRoot 'data'
     $appRoot = Join-Path $runtimeRoot 'app'
+    $stageRoot = Join-Path $runtimeRoot 'update-stage'
+    $previousRoot = Join-Path $runtimeRoot 'previous'
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
+    Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot 'app') | Out-Null
     $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/24604ca001916b974fe1f4bca93d0cc5fe7980f9'
     $files = @(
-        @{Url="$rawBase/start.ps1";Path=(Join-Path $runtimeRoot 'start.ps1');Sha256='0C149BDA954B0AC70777EB3B80B44A2F4434A944C8915D7FCD69F8CB8A3FCF76'},
-        @{Url="$rawBase/stop.ps1";Path=(Join-Path $runtimeRoot 'stop.ps1');Sha256='64A65E761A41A9DCBBA75706FEA37C4614B944A152B56FF4B6E3F39116733304'},
-        @{Url="$rawBase/app/hands.py";Path=(Join-Path $appRoot 'hands.py');Sha256='CC0E1B428143ADD3255BD6B73BB7970130A9A5A921ED4423B3CCF4ACF8A5C623'},
-        @{Url="$rawBase/app/supabase_channel.py";Path=(Join-Path $appRoot 'supabase_channel.py');Sha256='924B31D1CD891EFC3F2FF46B440E6B7FFF590DEAE9D3247C49A036732D3A7AA3'},
-        @{Url="$rawBase/app/hands_supabase_config.json";Path=(Join-Path $appRoot 'hands_supabase_config.json');Sha256='435844EAF35BFE270FD41AB9C1706B462F9097A19CAC09DDCC3BFA118001CAEA'}
+        @{Rel='start.ps1';Sha256='0C149BDA954B0AC70777EB3B80B44A2F4434A944C8915D7FCD69F8CB8A3FCF76'},
+        @{Rel='stop.ps1';Sha256='64A65E761A41A9DCBBA75706FEA37C4614B944A152B56FF4B6E3F39116733304'},
+        @{Rel='self-test.ps1';Sha256='A209672E7B003452C106006CE9F9ADB7A4687184978D709B2B12FA0720050F26'},
+        @{Rel='app/hands.py';Sha256='CC0E1B428143ADD3255BD6B73BB7970130A9A5A921ED4423B3CCF4ACF8A5C623'},
+        @{Rel='app/supabase_channel.py';Sha256='924B31D1CD891EFC3F2FF46B440E6B7FFF590DEAE9D3247C49A036732D3A7AA3'},
+        @{Rel='app/hands_supabase_config.json';Sha256='435844EAF35BFE270FD41AB9C1706B462F9097A19CAC09DDCC3BFA118001CAEA'}
     )
     foreach ($file in $files) {
-        $tmp = "$($file.Path).download"
-        try {
-            Invoke-WebRequest -UseBasicParsing -Uri $file.Url -OutFile $tmp
-            if ((Get-Item -LiteralPath $tmp).Length -lt 100) { throw 'download too small' }
-            $actualHash = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToUpperInvariant()
-            if ($actualHash -ne $file.Sha256) { throw 'runtime integrity check failed' }
-            Move-Item -LiteralPath $tmp -Destination $file.Path -Force
-        } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        $stagePath=Join-Path $stageRoot ($file.Rel -replace '/','\')
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stagePath) | Out-Null
+        Invoke-WebRequest -UseBasicParsing -Uri "$rawBase/$($file.Rel)" -OutFile $stagePath
+        if ((Get-Item -LiteralPath $stagePath).Length -lt 100) { throw 'download too small' }
+        $actualHash=(Get-FileHash -LiteralPath $stagePath -Algorithm SHA256).Hash.ToUpperInvariant()
+        if ($actualHash -ne $file.Sha256) { throw "runtime integrity check failed: $($file.Rel)" }
     }
+    & $python -m py_compile (Join-Path $stageRoot 'app\hands.py') (Join-Path $stageRoot 'app\supabase_channel.py')
+    if($LASTEXITCODE -ne 0){throw 'staged Python compile failed'}
+    Remove-Item -LiteralPath $previousRoot -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path (Join-Path $previousRoot 'app') | Out-Null
+    foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json')){
+        $current=Join-Path $runtimeRoot $rel
+        if(Test-Path -LiteralPath $current){$backup=Join-Path $previousRoot $rel; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backup)|Out-Null; Copy-Item -LiteralPath $current -Destination $backup -Force}
+    }
+    try{
+        foreach($file in $files){$rel=$file.Rel -replace '/','\'; $src=Join-Path $stageRoot $rel; $dst=Join-Path $runtimeRoot $rel; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst)|Out-Null; Copy-Item -LiteralPath $src -Destination $dst -Force}
+        @{release_sha='24604ca001916b974fe1f4bca93d0cc5fe7980f9';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
+    }catch{
+        foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json')){$backup=Join-Path $previousRoot $rel;if(Test-Path -LiteralPath $backup){$dst=Join-Path $runtimeRoot $rel;Copy-Item -LiteralPath $backup -Destination $dst -Force}}
+        throw
+    }
+    Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
     $startPath = Join-Path $runtimeRoot 'start.ps1'
     $bytes = [IO.File]::ReadAllBytes($startPath)
     if (@($bytes | Where-Object { $_ -ge 128 }).Count -ne 0) { throw 'start.ps1 must be ASCII-only' }
