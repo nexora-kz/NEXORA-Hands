@@ -60,10 +60,11 @@ try {
     $files = @(
         @{Rel='start.ps1';Sha256='0C149BDA954B0AC70777EB3B80B44A2F4434A944C8915D7FCD69F8CB8A3FCF76'},
         @{Rel='stop.ps1';Sha256='64A65E761A41A9DCBBA75706FEA37C4614B944A152B56FF4B6E3F39116733304'},
-        @{Rel='self-test.ps1';Sha256='19FF1D6E63F978F244A3ED83CC00D69CE481AFDE56859E32CD35CAD89A2E4C46'},
-        @{Rel='app/hands.py';Sha256='CC0E1B428143ADD3255BD6B73BB7970130A9A5A921ED4423B3CCF4ACF8A5C623'},
+        @{Rel='self-test.ps1';Sha256='ED43524BDF5CB1BCB7676260B91B9D318CE49A8825E2D253A021D3CB8AC7A742'},
+        @{Rel='app/hands.py';Sha256='ABC8206EA2548B8D0EDF209751BBFC6F5D8483ADAFEC669C56D5117FF51E79D8'},
         @{Rel='app/supabase_channel.py';Sha256='924B31D1CD891EFC3F2FF46B440E6B7FFF590DEAE9D3247C49A036732D3A7AA3'},
-        @{Rel='app/hands_supabase_config.json';Sha256='435844EAF35BFE270FD41AB9C1706B462F9097A19CAC09DDCC3BFA118001CAEA'}
+        @{Rel='app/hands_supabase_config.json';Sha256='435844EAF35BFE270FD41AB9C1706B462F9097A19CAC09DDCC3BFA118001CAEA'},
+        @{Rel='app/agent_control.py';Sha256='EFE2CDA3F7B5389D8823DEEAD48B2B21155C6387395F4515E5FDFBEFB2EBA892'}
     )
     foreach ($file in $files) {
         $stagePath=Join-Path $stageRoot ($file.Rel -replace '/','\')
@@ -73,11 +74,11 @@ try {
         $actualHash=(Get-FileHash -LiteralPath $stagePath -Algorithm SHA256).Hash.ToUpperInvariant()
         if ($actualHash -ne $file.Sha256) { throw "runtime integrity check failed: $($file.Rel)" }
     }
-    & $python -m py_compile (Join-Path $stageRoot 'app\hands.py') (Join-Path $stageRoot 'app\supabase_channel.py')
+    & $python -m py_compile (Join-Path $stageRoot 'app\hands.py') (Join-Path $stageRoot 'app\supabase_channel.py') (Join-Path $stageRoot 'app\agent_control.py')
     if($LASTEXITCODE -ne 0){throw 'staged Python compile failed'}
     Remove-Item -LiteralPath $previousRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $previousRoot 'app') | Out-Null
-    foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json')){
+    foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json','app\agent_control.py')){
         $current=Join-Path $runtimeRoot $rel
         if(Test-Path -LiteralPath $current){$backup=Join-Path $previousRoot $rel; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $backup)|Out-Null; Copy-Item -LiteralPath $current -Destination $backup -Force}
     }
@@ -85,7 +86,7 @@ try {
         foreach($file in $files){$rel=$file.Rel -replace '/','\'; $src=Join-Path $stageRoot $rel; $dst=Join-Path $runtimeRoot $rel; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst)|Out-Null; Copy-Item -LiteralPath $src -Destination $dst -Force}
         @{release_sha='404fb529b6f9769773b842cae45060dbbdc85baf';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
     }catch{
-        foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json')){$backup=Join-Path $previousRoot $rel;if(Test-Path -LiteralPath $backup){$dst=Join-Path $runtimeRoot $rel;Copy-Item -LiteralPath $backup -Destination $dst -Force}}
+        foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json','app\agent_control.py')){$backup=Join-Path $previousRoot $rel;if(Test-Path -LiteralPath $backup){$dst=Join-Path $runtimeRoot $rel;Copy-Item -LiteralPath $backup -Destination $dst -Force}}
         throw
     }
     Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
