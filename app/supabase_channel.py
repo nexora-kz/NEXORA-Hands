@@ -415,7 +415,23 @@ def main():
                 try:
                     result_file=OUTBOX/f"{task_id}.json"
                     if result_file.exists():
-                        result=sanitize_transport_value(json.loads(result_file.read_text(encoding="utf-8")))
+                        try:
+                            result=sanitize_transport_value(json.loads(result_file.read_text(encoding="utf-8")))
+                        except (json.JSONDecodeError, UnicodeDecodeError) as decode_error:
+                            quarantine=DATA/"quarantine"
+                            quarantine.mkdir(parents=True,exist_ok=True)
+                            corrupt=quarantine/f"{task_id}.{int(time.time())}.corrupt.json"
+                            try:
+                                os.replace(result_file,corrupt)
+                            except OSError:
+                                corrupt.write_bytes(result_file.read_bytes())
+                                result_file.unlink(missing_ok=True)
+                            result=sanitize_transport_value({
+                                "task_id":task_id,
+                                "status":"error",
+                                "error":f"malformed_local_result: {type(decode_error).__name__}: {decode_error}",
+                                "quarantined_result":str(corrupt),
+                            })
                         accepted=submit_result(c,worker,task_id,result,meta["lease_token"])
                         if not accepted:
                             save_state(status="stale_result_discarded",worker_id=worker,task_id=task_id)
