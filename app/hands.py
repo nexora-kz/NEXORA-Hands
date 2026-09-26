@@ -194,6 +194,13 @@ SUPPORTED_OPERATIONS={
     "health":"Executor/transport health snapshot",
     "local_queue":"Local inbox/running/outbox queue snapshot",
     "cleanup_preview":"Preview old local Hands artifacts without deleting them",
+    "agent_status":"Hands agent lifecycle/version/integrity status",
+    "verify_agent":"Verify Hands runtime files, compile state and health",
+    "file_hash":"Calculate a file cryptographic hash",
+    "directory_manifest":"Create a SHA-256 directory manifest",
+    "disk_info":"List local disks and free space",
+    "network_info":"Network addresses and listening TCP ports",
+    "process_tree":"Windows process tree with command lines",
 }
 
 def _metrics_snapshot():
@@ -509,6 +516,27 @@ def execute(c):
             "inline_result_bytes":DEFAULT_INLINE_RESULT_BYTES,
             "diagnostic_console":diagnostic_mode(),
         }
+    if op=="agent_status":
+        from agent_control import agent_status
+        return agent_status()
+    if op=="verify_agent":
+        from agent_control import verify_agent
+        return verify_agent()
+    if op=="file_hash":
+        from agent_control import file_hash
+        return file_hash(c["path"],c.get("algorithm") or "sha256")
+    if op=="directory_manifest":
+        from agent_control import directory_manifest
+        return directory_manifest(c["path"],bool(c.get("recursive",True)),int(c.get("max_files") or 10000))
+    if op=="disk_info":
+        from agent_control import disk_info
+        return disk_info()
+    if op=="network_info":
+        from agent_control import network_info
+        return network_info()
+    if op=="process_tree":
+        from agent_control import process_tree
+        return process_tree()
     if op=="cleanup_preview":
         hours=max(1,min(8760,int(c.get("older_than_hours") or 168)))
         cutoff=time.time()-hours*3600
