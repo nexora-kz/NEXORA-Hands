@@ -1,5 +1,6 @@
 import json
 import os
+import base64
 import difflib
 import hashlib
 import threading
@@ -153,6 +154,7 @@ SUPPORTED_OPERATIONS={
     "batch":"Execute up to 5 Hands operations concurrently",
     "read_file":"Read a UTF-8 text file",
     "write_file":"Write a UTF-8 text file",
+    "write_binary":"Write/append Base64-decoded binary data without a shell process",
     "list_directory":"List directory entries",
     "delete":"Delete file or directory",
     "mkdir":"Create directory",
@@ -591,6 +593,12 @@ def execute(c):
         p=Path(str(c["path"])).resolve(); return {"path":str(p),"content":p.read_text(encoding="utf-8",errors="replace")}
     if op=="write_file":
         p=Path(str(c["path"])).resolve(); p.parent.mkdir(parents=True,exist_ok=True); p.write_text(str(c.get("content") or ""),encoding="utf-8"); return {"path":str(p),"bytes":p.stat().st_size}
+    if op=="write_binary":
+        p=Path(str(c["path"])).resolve(); raw=base64.b64decode(str(c.get("data_base64") or ""),validate=True); p.parent.mkdir(parents=True,exist_ok=True); mode="ab" if bool(c.get("append")) else "wb"
+        with p.open(mode) as f: f.write(raw)
+        data=p.read_bytes(); digest=hashlib.sha256(data).hexdigest(); expected=str(c.get("expected_sha256") or "").strip().lower()
+        if expected and digest!=expected: raise ValueError(f"SHA-256 mismatch: expected {expected}, got {digest}")
+        return {"path":str(p),"chunk_bytes":len(raw),"bytes":len(data),"sha256":digest,"append":mode=="ab"}
     if op=="list_directory":
         p=Path(str(c.get("path") or ".")).resolve(); return {"path":str(p),"items":[{"name":x.name,"directory":x.is_dir(),"size":x.stat().st_size if x.is_file() else None} for x in p.iterdir()]}
     if op=="delete":
