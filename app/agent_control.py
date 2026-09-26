@@ -66,7 +66,6 @@ def agent_status():
     if mp.exists():
         try: manifest=json.loads(mp.read_text(encoding="utf-8-sig"))
         except Exception: pass
-    active=(DATA/"active_slot.txt").read_text(encoding="utf-8-sig").strip() if (DATA/"active_slot.txt").exists() else "LEGACY"
     def js(p):
         try:return json.loads(Path(p).read_text(encoding="utf-8-sig"))
         except Exception:return {}
