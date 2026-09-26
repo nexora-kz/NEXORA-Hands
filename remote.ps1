@@ -57,7 +57,7 @@ try {
         @{Url="$rawBase/start.ps1";Path=(Join-Path $runtimeRoot 'start.ps1');Sha256='0C149BDA954B0AC70777EB3B80B44A2F4434A944C8915D7FCD69F8CB8A3FCF76'},
         @{Url="$rawBase/stop.ps1";Path=(Join-Path $runtimeRoot 'stop.ps1');Sha256='64A65E761A41A9DCBBA75706FEA37C4614B944A152B56FF4B6E3F39116733304'},
         @{Url="$rawBase/app/hands.py";Path=(Join-Path $appRoot 'hands.py');Sha256='CC0E1B428143ADD3255BD6B73BB7970130A9A5A921ED4423B3CCF4ACF8A5C623'},
-        @{Url="$rawBase/app/supabase_channel.py";Path=(Join-Path $appRoot 'supabase_channel.py');Sha256='7F261A867B1FEFDA96510A3A46C14FB1D0C1890F7D9B52796672B7D4E9FE4AB1'},
+        @{Url="$rawBase/app/supabase_channel.py";Path=(Join-Path $appRoot 'supabase_channel.py');Sha256='924B31D1CD891EFC3F2FF46B440E6B7FFF590DEAE9D3247C49A036732D3A7AA3'},
         @{Url="$rawBase/app/hands_supabase_config.json";Path=(Join-Path $appRoot 'hands_supabase_config.json');Sha256='435844EAF35BFE270FD41AB9C1706B462F9097A19CAC09DDCC3BFA118001CAEA'}
     )
     foreach ($file in $files) {
