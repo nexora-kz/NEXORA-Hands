@@ -60,8 +60,16 @@ def main():
         except Exception:pass
         launch(root)
         if not healthy(root,started): raise RuntimeError("fresh health timeout")
-        cp=subprocess.run(["powershell.exe","-NoProfile","-ExecutionPolicy","RemoteSigned","-File",str(root/"self-test.ps1"),"-PythonPath",sys.executable],capture_output=True,text=True,timeout=120)
-        if cp.returncode: raise RuntimeError("self-test failed")
+        cp=None
+        for attempt in range(3):
+            cp=subprocess.run(["powershell.exe","-NoProfile","-ExecutionPolicy","RemoteSigned","-File",str(root/"self-test.ps1"),"-PythonPath",sys.executable],capture_output=True,text=True,timeout=120)
+            if cp.returncode==0: break
+            time.sleep(2)
+        if cp.returncode:
+            rep["self_test_stdout"]=cp.stdout[-3000:]
+            rep["self_test_stderr"]=cp.stderr[-3000:]
+            save(rp,rep)
+            raise RuntimeError("self-test failed after 3 attempts")
         if not a.rollback: save(data/"release_manifest.json",{"release_sha":a.release_sha,"installed_at":time.time(),"hashes":hashes})
         rep.update(ok=True,completed_at=time.time()); save(rp,rep)
     except Exception as e:
