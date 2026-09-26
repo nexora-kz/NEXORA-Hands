@@ -26,7 +26,9 @@ try{
   $checks.queue=($state -and $state.queue_stalled -eq $false)
   $checks.result_submit=($state -and @($state.result_submit_errors.PSObject.Properties).Count -eq 0)
   $ok=(@($checks.Values|?{$_ -ne $true}).Count -eq 0)
-  [ordered]@{ok=$ok;checked_at=[DateTimeOffset]::UtcNow.ToString('o');checks=$checks;manifest=(if(Test-Path $Manifest){Get-Content -Raw $Manifest|ConvertFrom-Json}else{$null})}|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $Report -Encoding UTF8
+  $manifestValue=$null
+  if(Test-Path $Manifest){$manifestValue=Get-Content -Raw $Manifest|ConvertFrom-Json}
+  [ordered]@{ok=$ok;checked_at=[DateTimeOffset]::UtcNow.ToString('o');checks=$checks;manifest=$manifestValue}|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $Report -Encoding UTF8
   if(-not $ok){exit 1}; exit 0
 }catch{
   [ordered]@{ok=$false;checked_at=[DateTimeOffset]::UtcNow.ToString('o');checks=$checks;error=$_.Exception.Message}|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $Report -Encoding UTF8
