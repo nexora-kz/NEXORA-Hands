@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
+const CONTROL_TOKEN=Deno.env.get("NEXORA_TRANSPORT_TOKEN")||""
 const url=Deno.env.get("SUPABASE_URL")!
 const serviceKey=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 const corsHeaders={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"content-type","Access-Control-Allow-Methods":"POST,OPTIONS"}
@@ -32,6 +33,8 @@ function json(data:unknown,status=200){
 Deno.serve(async(req:Request)=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders})
   try{
+    const token=req.headers.get("x-nexora-control-token")||""
+    if(!CONTROL_TOKEN||token!==CONTROL_TOKEN)return json({error:"unauthorized"},401)
     if(req.method!=="POST")return json({error:"POST required"},405)
     const db=createClient(url,serviceKey)
     const body=await req.json().catch(()=>({}))
