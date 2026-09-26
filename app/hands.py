@@ -201,6 +201,8 @@ SUPPORTED_OPERATIONS={
     "disk_info":"List local disks and free space",
     "network_info":"Network addresses and listening TCP ports",
     "process_tree":"Windows process tree with command lines",
+    "service_list":"List Windows services",
+    "service_action":"Start, stop or restart a named Windows service",
 }
 
 def _metrics_snapshot():
