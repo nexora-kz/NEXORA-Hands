@@ -114,8 +114,9 @@ def start_agent_update(release_sha,mode="update"):
     updater=ROOT/"app/agent_updater.py"
     if not updater.is_file(): raise FileNotFoundError(str(updater))
     log=DATA/"agent_update_launch.json"
-    args=[sys.executable,str(updater),"--root",str(ROOT),"--mode",mode]
-    if mode=="update":args+=["--release-sha",sha]
+    args=[sys.executable,str(updater),"--root",str(ROOT)]
+    if mode=="update": args+=["--release-sha",sha]
+    else: args+=["--rollback"]
     flags=getattr(subprocess,"DETACHED_PROCESS",0)|getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0)|getattr(subprocess,"CREATE_NO_WINDOW",0)
     p=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True,creationflags=flags)
     out={"accepted":True,"mode":mode,"release_sha":sha or None,"coordinator_pid":p.pid,"requested_at":time.time()}
