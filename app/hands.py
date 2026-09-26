@@ -203,6 +203,8 @@ SUPPORTED_OPERATIONS={
     "process_tree":"Windows process tree with command lines",
     "service_list":"List Windows services",
     "service_action":"Start, stop or restart a named Windows service",
+    "update_agent":"Install a verified immutable Hands release using detached native updater",
+    "rollback_agent":"Restore the previous verified Hands runtime using detached native updater",
 }
 
 def _metrics_snapshot():
@@ -545,6 +547,12 @@ def execute(c):
     if op=="service_action":
         from agent_control import service_action
         return service_action(c["name"],c["action"])
+    if op=="update_agent":
+        from agent_control import start_agent_update
+        return start_agent_update(c["release_sha"],"update")
+    if op=="rollback_agent":
+        from agent_control import start_agent_update
+        return start_agent_update(None,"rollback")
     if op=="cleanup_preview":
         hours=max(1,min(8760,int(c.get("older_than_hours") or 168)))
         cutoff=time.time()-hours*3600
