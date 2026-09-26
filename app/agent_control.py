@@ -71,10 +71,10 @@ def agent_status():
         try:return json.loads(Path(p).read_text(encoding="utf-8-sig"))
         except Exception:return {}
     ex=js(DATA/"state.json"); ch=js(DATA/"supabase_channel_state.json")
-    return {"root":str(ROOT),"active_slot":active,"release":manifest,"executor_pid":ex.get("pid"),"executor_status":ex.get("status"),"transport_status":ch.get("status"),"heartbeat_ok":ch.get("heartbeat_ok"),"executor_online":ch.get("executor_online"),"queue_stalled":ch.get("queue_stalled"),"uptime_seconds":max(0,time.time()-float(ex.get("executor_started_at") or time.time()))}
+    return {"root":str(ROOT),"lifecycle_mode":"native","release_sha":manifest.get("release_sha"),"release":manifest,"executor_pid":ex.get("pid"),"executor_status":ex.get("status"),"transport_status":ch.get("status"),"heartbeat_ok":ch.get("heartbeat_ok"),"executor_online":ch.get("executor_online"),"queue_stalled":ch.get("queue_stalled"),"uptime_seconds":max(0,time.time()-float(ex.get("executor_started_at") or time.time()))}
 
 def verify_agent():
-    required=["start.ps1","stop.ps1","self-test.ps1","app/hands.py","app/supabase_channel.py","app/hands_supabase_config.json","app/agent_control.py"]
+    required=["start.ps1","stop.ps1","self-test.ps1","app/hands.py","app/supabase_channel.py","app/hands_supabase_config.json","app/agent_control.py","app/agent_updater.py"]
     files={}
     ok=True
     for rel in required:
