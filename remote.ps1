@@ -56,7 +56,7 @@ try {
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
     Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot 'app') | Out-Null
-    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/c7719e64e5fc3e66c888479e8797aae016b790d0'
+    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/404fb529b6f9769773b842cae45060dbbdc85baf'
     $files = @(
         @{Rel='start.ps1';Sha256='0C149BDA954B0AC70777EB3B80B44A2F4434A944C8915D7FCD69F8CB8A3FCF76'},
         @{Rel='stop.ps1';Sha256='64A65E761A41A9DCBBA75706FEA37C4614B944A152B56FF4B6E3F39116733304'},
@@ -83,7 +83,7 @@ try {
     }
     try{
         foreach($file in $files){$rel=$file.Rel -replace '/','\'; $src=Join-Path $stageRoot $rel; $dst=Join-Path $runtimeRoot $rel; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst)|Out-Null; Copy-Item -LiteralPath $src -Destination $dst -Force}
-        @{release_sha='c7719e64e5fc3e66c888479e8797aae016b790d0';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
+        @{release_sha='404fb529b6f9769773b842cae45060dbbdc85baf';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
     }catch{
         foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json')){$backup=Join-Path $previousRoot $rel;if(Test-Path -LiteralPath $backup){$dst=Join-Path $runtimeRoot $rel;Copy-Item -LiteralPath $backup -Destination $dst -Force}}
         throw
