@@ -60,6 +60,8 @@ try{
     $report.rollback_healthy=(Wait-Healthy)
   }catch{$report.rollback_error=$_.Exception.Message}
   $report.completed_at=[DateTimeOffset]::UtcNow.ToString('o')
+  $pending=Join-Path $Data 'pending_switch.json'
+  if(Test-Path $pending){Remove-Item $pending -Force -ErrorAction SilentlyContinue}
   $report|ConvertTo-Json -Depth 8|Set-Content $ReportFile -Encoding UTF8
   exit 1
 }
