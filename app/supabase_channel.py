@@ -311,22 +311,12 @@ def claimed_rows(c, worker):
     })
     return request("GET","/hands_commands?"+q) or []
 
-def command_timeout_seconds(cmd, default=300):
-    command=cmd.get("command") if isinstance(cmd,dict) else None
-    try:
-        value=float((command or {}).get("timeout_seconds") or default)
-    except Exception:
-        value=float(default)
-    return max(5.0,min(600.0,value))
-
 def active_entry(cmd, timeout_seconds=None):
-    execution_timeout=command_timeout_seconds(cmd,300) if timeout_seconds is None else max(5.0,min(600.0,float(timeout_seconds)))
+    # Transport lifetime is lease/heartbeat based; the operation owns explicit execution timeouts.
     return {
         "id":cmd.get("id"),
         "task_id":str(cmd.get("task_id") or ""),
         "lease_token":str(cmd.get("lease_token") or ""),
-        "execution_timeout_seconds":execution_timeout,
-        "deadline":time.monotonic()+execution_timeout+30.0,
         "lease_refresh_at":0.0,
     }
 
@@ -443,14 +433,6 @@ def main():
                         continue
 
                     now=time.monotonic()
-                    if now>=meta["deadline"]:
-                        submit_result(c,worker,task_id,
-                                      {"task_id":task_id,"status":"timeout_waiting_result"},
-                                      meta["lease_token"],"local result timeout")
-                        active.pop(task_id,None)
-                        channel_progress("completed")
-                        continue
-
                     if now>=meta["lease_refresh_at"]:
                         refresh_lease(worker,meta)
                         meta["lease_refresh_at"]=now+lease_interval

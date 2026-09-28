@@ -187,6 +187,10 @@ SUPPORTED_OPERATIONS={
     "process_start":"Start background process",
     "process_wait":"Wait for background process",
     "process_stop":"Stop background process",
+    "job_start":"Start a durable background job",
+    "job_status":"Read durable background job status",
+    "job_result":"Read durable background job output",
+    "job_cancel":"Cancel a durable background job",
     "system_info":"System information",
     "system_resources":"System resources",
     "environment":"Environment variable names/selected values",
@@ -799,6 +803,30 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids: subprocess.run(powershell_args(f"Stop-Process -Id {tid} -Force -ErrorAction SilentlyContinue"),capture_output=True,timeout=15)
         mp.unlink(missing_ok=True)
         return {"session_id":sid,"stopped":True,"pids":ids}
+    if op=="job_start":
+        forwarded=dict(c); forwarded["operation"]="process_start"
+        return execute(forwarded)
+    if op in ("job_status","job_result"):
+        task_id=str(c.get("job_id") or c.get("task_id") or "").strip()
+        if not task_id: raise ValueError("job_id is required")
+        mp=PROCESS_DIR/f"{task_id}.json"
+        if not mp.exists(): raise FileNotFoundError(f"job metadata not found: {task_id}")
+        m=json.loads(mp.read_text(encoding="utf-8")); outp=Path(m["stdout"]); errp=Path(m["stderr"])
+        out=outp.read_text(encoding="utf-8",errors="replace") if outp.exists() else ""; err=errp.read_text(encoding="utf-8",errors="replace") if errp.exists() else ""
+        running=m.get("exitcode") is None
+        base={"job_id":task_id,"pid":m.get("pid"),"child_pid":m.get("child_pid"),"running":running,"completed":not running,"exitcode":m.get("exitcode"),"started_at":m.get("started_at")}
+        if op=="job_result": base.update({"stdout":out,"stderr":err})
+        else: base.update({"stdout_bytes":len(out.encode("utf-8")),"stderr_bytes":len(err.encode("utf-8"))})
+        return base
+    if op=="job_cancel":
+        task_id=str(c.get("job_id") or c.get("task_id") or "").strip()
+        if not task_id: raise ValueError("job_id is required")
+        mp=PROCESS_DIR/f"{task_id}.json"
+        if not mp.exists(): raise FileNotFoundError(f"job metadata not found: {task_id}")
+        m=json.loads(mp.read_text(encoding="utf-8")); pid=m.get("pid")
+        if not str(pid).isdigit(): return {"job_id":task_id,"cancelled":False,"reason":"job_not_started"}
+        result=execute({"operation":"process_stop","pid":int(pid)})
+        return {"job_id":task_id,"cancelled":bool(result.get("stopped")),"process":result}
     if op=="process_start":
         command=c.get("command");
         if not command: raise ValueError("process_start command is empty")
