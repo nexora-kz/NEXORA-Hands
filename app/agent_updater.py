@@ -1,4 +1,4 @@
-import argparse, hashlib, json, os, shutil, subprocess, sys, time, urllib.request
+import argparse, hashlib, json, os, shutil, subprocess, sys, time, urllib.request, msvcrt
 from pathlib import Path
 
 PAYLOAD=("start.ps1","stop.ps1","self-test.ps1","app/hands.py","app/supabase_channel.py","app/hands_supabase_config.json","app/agent_control.py","app/agent_updater.py")
@@ -32,6 +32,11 @@ def healthy(root,after,timeout=90):
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument("--root",required=True); ap.add_argument("--release-sha"); ap.add_argument("--rollback",action="store_true"); a=ap.parse_args()
     root=Path(a.root).resolve(); data=root/"data"; data.mkdir(exist_ok=True)
+    lock_file=open(data/"agent_update.lock","a+b")
+    try:
+        msvcrt.locking(lock_file.fileno(),msvcrt.LK_NBLCK,1)
+    except OSError:
+        lock_file.close(); raise RuntimeError("another agent update/rollback is already running")
     stage=root/"update-stage-native"; previous=root/"previous-verified"; rp=data/"agent_update_report.json"
     rep={"ok":False,"mode":"rollback" if a.rollback else "update","release_sha":a.release_sha,"started_at":time.time()}; save(rp,rep)
     try:
@@ -81,6 +86,9 @@ def main():
             except Exception as re: rep["rollback_error"]=str(re)
         rep["completed_at"]=time.time(); save(rp,rep); raise
     finally:
+        try:
+            lock_file.seek(0); msvcrt.locking(lock_file.fileno(),msvcrt.LK_UNLCK,1); lock_file.close()
+        except Exception: pass
         if stage.exists():
             try:shutil.rmtree(stage)
             except Exception:pass
