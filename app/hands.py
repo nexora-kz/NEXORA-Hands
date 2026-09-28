@@ -520,6 +520,7 @@ def execute(c):
         return {
             "operations":SUPPORTED_OPERATIONS,
             "operation_names":sorted(SUPPORTED_OPERATIONS),
+            "operation_contracts":{"batch":{"commands":{"type":"array","min_items":1,"max_items":5,"items":"Hands operation object"},"aliases":{"operations":"commands"},"nested_batch":False}},
             "max_parallel_commands":max_parallel_commands(),
             "inline_result_bytes":DEFAULT_INLINE_RESULT_BYTES,
             "diagnostic_console":diagnostic_mode(),
@@ -602,9 +603,11 @@ def execute(c):
             "counts":{"queued_local":len(inbox),"running_local":len(running),"pending_results":len(pending)}
         }
     if op=="batch":
-        commands=c.get("commands") or []
+        commands=c.get("commands")
+        if commands is None:
+            commands=c.get("operations")
         if not isinstance(commands,list) or not commands:
-            raise ValueError("batch commands is empty")
+            raise ValueError("batch commands/operations is empty")
         if len(commands)>5:
             raise ValueError("batch supports at most 5 commands")
         for item in commands:
