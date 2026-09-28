@@ -1,0 +1,14 @@
+{
+  "supabase_project": "igeddbknrctsdufieosg",
+  "public_entrypoints": {
+    "cmd": "remote.cmd",
+    "launcher": "launch.html",
+    "bootstrap": "remote.ps1"
+  },
+  "supabase_functions": [
+    "nexora-hands-transport",
+    "nexora-hands-mcp",
+    "nexora-hands-control",
+    "nexora-hands-control-v2"
+  ]
+}
