@@ -133,7 +133,7 @@ def register_worker(c):
 
 def request(method, path, body=None, include_worker_token=True):
     c = cfg()
-    headers = {"apikey": c["publishable_key"], "Prefer": "return=representation", "Content-Type": "application/json"}
+    headers = {"apikey": c["publishable_key"], "Prefer": "return=representation", "Content-Type": "application/json", "x-nexora-machine-id": machine_identity()}
     if include_worker_token and c.get("worker_token"):
         headers["x-nexora-hands-token"] = str(c["worker_token"])
     else:
@@ -370,6 +370,10 @@ def main():
     if not c.get("worker_token"):
         c=register_worker(c)
     worker=str(c.get("worker_id") or "")
+    if worker and not heartbeat(c, worker):
+        c["worker_id"]=""; c["worker_token"]=""
+        c=register_worker(c)
+        worker=str(c.get("worker_id") or "")
     if not worker:
         raise RuntimeError("worker_id is empty after registration")
     poll=max(0.1,float(c.get("poll_seconds") or 1.0))
