@@ -381,6 +381,7 @@ def main():
     lease_interval=max(5.0,min(30.0,heartbeat_seconds))
     limit=max_parallel_commands(c)
     next_heartbeat=0.0
+    last_heartbeat_ok=False
     active,repaired_legacy=adopt_local_claims(c,worker)
     save_state(status="starting",worker_id=worker,max_parallel_commands=limit,
                active_count=len(active),active_tasks=sorted(active),
@@ -394,6 +395,7 @@ def main():
                 # will naturally disappear from online listings until watchdog recovery.
                 executor_ok=bool(health_fields(len(active)).get("executor_online"))
                 ok=heartbeat(c,worker) if executor_ok else False
+                last_heartbeat_ok=ok
                 save_state(status="heartbeat" if ok else ("executor_offline" if not executor_ok else "heartbeat_failed"),worker_id=worker,
                            heartbeat_ok=ok,heartbeat_at=time.time(),
                            max_parallel_commands=limit,active_count=len(active),active_tasks=sorted(active))
@@ -454,7 +456,7 @@ def main():
                 active[task_id]=active_entry(cmd)
 
             save_state(status="busy" if active else "idle",worker_id=worker,
-                       heartbeat_ok=True,max_parallel_commands=limit,
+                       heartbeat_ok=last_heartbeat_ok,max_parallel_commands=limit,
                        active_count=len(active),active_tasks=sorted(active),
                        error=("; ".join(f"{k}: {v}" for k,v in sorted(result_submit_errors.items())) if result_submit_errors else ""),
                        result_submit_errors=result_submit_errors)

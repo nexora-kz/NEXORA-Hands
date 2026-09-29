@@ -1,4 +1,4 @@
-﻿alter table nexora_private.hands_worker_auth
+alter table nexora_private.hands_worker_auth
   add column if not exists machine_identity text;
 
 create or replace function public.hands_register_worker()
@@ -39,7 +39,8 @@ begin
    where enabled = true
      and worker_id = p_worker_id
      and token_sha256 = p_channel_token
-     and (v_machine is null or machine_identity is null or upper(machine_identity) = v_machine);
+     and v_machine is not null
+     and (machine_identity is null or upper(machine_identity) = v_machine);
   return found;
 end;
 $$;
