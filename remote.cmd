@@ -4,7 +4,7 @@ chcp 65001 >nul
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 set "BOOTSTRAP=%TEMP%\NEXORA-Hands-remote.ps1"
-curl.exe -fL --retry 2 --connect-timeout 15 "https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/main/remote.ps1" -o "%BOOTSTRAP%"
+curl.exe -fL --retry 2 --connect-timeout 15 -H "Cache-Control: no-cache" "https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/main/remote.ps1?cb=%RANDOM%%RANDOM%%RANDOM%" -o "%BOOTSTRAP%"
 if errorlevel 1 goto :fail
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "%BOOTSTRAP%"
 set "RC=%ERRORLEVEL%"
