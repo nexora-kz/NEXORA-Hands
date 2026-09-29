@@ -56,16 +56,16 @@ try {
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
     Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot 'app') | Out-Null
-    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/50824104315c7849838d2e2f2b4ed7a6097cefa2'
+    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/228f4af08303fba3e0f9a285cf6ba53aa36d7874'
     $files = @(
-        @{Rel='start.ps1';Sha256='0C149BDA954B0AC70777EB3B80B44A2F4434A944C8915D7FCD69F8CB8A3FCF76'},
-        @{Rel='stop.ps1';Sha256='64A65E761A41A9DCBBA75706FEA37C4614B944A152B56FF4B6E3F39116733304'},
-        @{Rel='self-test.ps1';Sha256='ED43524BDF5CB1BCB7676260B91B9D318CE49A8825E2D253A021D3CB8AC7A742'},
-        @{Rel='app/hands.py';Sha256='B1BCDFEE0DC7A80F6443A53EBFC3AC403E2F667A06A78FC272A7CFDDD7F5A1A9'},
-        @{Rel='app/supabase_channel.py';Sha256='17B0346BF629833F3F76D5003567B57D3AC83ECDE643A0B73EED3493902F4DA2'},
-        @{Rel='app/hands_supabase_config.json';Sha256='435844EAF35BFE270FD41AB9C1706B462F9097A19CAC09DDCC3BFA118001CAEA'},
-        @{Rel='app/agent_control.py';Sha256='E7A407568C3D1334E9AB33FDBA66C0EBC36F6C3CDB562E97969684FCFCA20667'},
-        @{Rel='app/agent_updater.py';Sha256='158EC1BAA53B700A1F04C0F02FE8D878ECF6629B20EDA9D18D66FD97FD2F8BC2'}
+        @{Rel='start.ps1';Sha256='DAB8C16B9D8FD728085EE0B847668930FBF73976C0431932F4DC23FADDCEE0A5'},
+        @{Rel='stop.ps1';Sha256='6E94D8594B164A3C8D78DF2A32693C2672CCEE7F6DE70C7E637C3781A52BD360'},
+        @{Rel='self-test.ps1';Sha256='2C38C29940E76889C457B40143E8E2D141F1B8172861E6916E0A760DA62ADE05'},
+        @{Rel='app/hands.py';Sha256='9AF4CAD78066A4A81DC8DF947950F27240078D153C77628EFD49BC6110BE890A'},
+        @{Rel='app/supabase_channel.py';Sha256='47BD79094D23886DB109F278467BF97446B3E9A12C3EC8DD52A6BADD8F679A7F'},
+        @{Rel='app/hands_supabase_config.json';Sha256='B85E4D6B9605134D0A4566BCC7FB8E0D17FED32AA49E5E9E459FE95962EFFBE9'},
+        @{Rel='app/agent_control.py';Sha256='99FA097A40861338491EE3F1E9D6F1BDBC595FDB2EC6450A163DFC10F66D063D'},
+        @{Rel='app/agent_updater.py';Sha256='52A049EFF8787E2EA923C9CF4A00979829A746D92F460644E9A8196C7C5438F8'}
     )
     foreach ($file in $files) {
         $stagePath=Join-Path $stageRoot ($file.Rel -replace '/','\')
@@ -85,7 +85,7 @@ try {
     }
     try{
         foreach($file in $files){$rel=$file.Rel -replace '/','\'; $src=Join-Path $stageRoot $rel; $dst=Join-Path $runtimeRoot $rel; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst)|Out-Null; Copy-Item -LiteralPath $src -Destination $dst -Force}
-        @{release_sha='50824104315c7849838d2e2f2b4ed7a6097cefa2';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
+        @{release_sha='228f4af08303fba3e0f9a285cf6ba53aa36d7874';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
     }catch{
         foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json','app\agent_control.py','app\agent_updater.py')){$backup=Join-Path $previousRoot $rel;if(Test-Path -LiteralPath $backup){$dst=Join-Path $runtimeRoot $rel;Copy-Item -LiteralPath $backup -Destination $dst -Force}}
         throw
