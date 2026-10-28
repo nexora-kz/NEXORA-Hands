@@ -197,6 +197,7 @@ SUPPORTED_OPERATIONS={
     "system_resources":"System resources",
     "environment":"Environment variable names/selected values",
     "get_capabilities":"List Hands operations and runtime limits",
+    "get_recent_tool_calls":"Read bounded, metadata-only local task history",
     "health":"Executor/transport health snapshot",
     "local_queue":"Local inbox/running/outbox queue snapshot",
     "cleanup_preview":"Preview old local Hands artifacts without deleting them",
@@ -527,6 +528,27 @@ def console_task_result(payload,op):
     for key,meta in (payload.get("large_outputs") or {}).items():
         console(f"[Полный результат:{key}] {meta.get('path')} | {_human_bytes(meta.get('bytes',0))} | SHA-256 {meta.get('sha256')}")
 
+def _record_task_history(task,op,result,started):
+    # Deliberately exclude command arguments, paths, stdout, stderr and tokens.
+    entry={"task_id":str(task)[:128],"operation":str(op)[:80],
+           "status":str(result.get("status") or "unknown")[:24],
+           "started_at":started,"duration_ms":int((time.time()-started)*1000)}
+    history=DATA/"tool-history.jsonl"
+    try:
+        with STATE_WRITE_LOCK:
+            if history.exists() and history.stat().st_size>1024*1024:
+                # Keep the newest records; never grow history without a bound.
+                with history.open("rb") as f:
+                    f.seek(max(0,history.stat().st_size-512*1024))
+                    tail=f.read().split(b"\n")[1:]
+                tmp=history.with_suffix(".tmp")
+                tmp.write_bytes(b"\n".join(tail).strip(b"\n")+b"\n")
+                os.replace(tmp,history)
+            with history.open("a",encoding="utf-8") as f:
+                f.write(json.dumps(entry,ensure_ascii=False)+"\n")
+    except OSError:
+        pass
+
 def execute(c):
     op=str(c.get("operation") or c.get("type") or "").strip().lower()
     if op=="get_capabilities":
@@ -538,6 +560,21 @@ def execute(c):
             "inline_result_bytes":DEFAULT_INLINE_RESULT_BYTES,
             "diagnostic_console":diagnostic_mode(),
         }
+    if op=="get_recent_tool_calls":
+        limit=max(1,min(100,int(c.get("limit") or 25)))
+        history=DATA/"tool-history.jsonl"
+        if not history.exists():
+            return {"count":0,"items":[],"metadata_only":True}
+        items=[]
+        with history.open("r",encoding="utf-8",errors="replace") as f:
+            for line in f:
+                try:
+                    row=json.loads(line)
+                    if c.get("filter_operation") and row.get("operation")!=c["filter_operation"]: continue
+                    items.append(row)
+                    if len(items)>1000: items.pop(0)
+                except (ValueError,TypeError): continue
+        return {"count":min(limit,len(items)),"items":items[-limit:][::-1],"metadata_only":True}
     if op=="agent_status":
         from agent_control import agent_status
         return agent_status()
@@ -1018,6 +1055,7 @@ def process_running(running):
     tmp=result_file.with_suffix(".tmp")
     tmp.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     os.replace(tmp,result_file)
+    _record_task_history(task,op,result,started)
     running.unlink(missing_ok=True)
     return task,result.get("status")
 

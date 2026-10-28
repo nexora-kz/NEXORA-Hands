@@ -72,7 +72,20 @@ try {
        $arg="import sys;sys.path.insert(0,sys.argv[1]);import agent_control;print(agent_control.start_agent_update(sys.argv[2],'update'))"
        & $py -c $arg (Join-Path $agent 'app') $ReleaseSha
        if($LASTEXITCODE -ne 0){throw 'Agent update not accepted'}
-       Step 'agent_update' 'ACCEPTED' 'detached updater started; verify report separately'
+       Step 'agent_update' 'ACCEPTED' 'waiting for detached updater result'
+       $deadline=(Get-Date).AddSeconds(120)
+       $confirmed=$false
+       do {
+         Start-Sleep -Seconds 2
+         $current=(Get-Content $manifest -Raw|ConvertFrom-Json).release_sha
+         $resultPath=Join-Path $agent 'data/agent_update_report.json'
+         if($current -eq $ReleaseSha -and (Test-Path $resultPath)){
+           $result=Get-Content $resultPath -Raw|ConvertFrom-Json
+           if($result.release_sha -eq $ReleaseSha -and $result.ok -eq $true){$confirmed=$true;break}
+         }
+       } while ((Get-Date) -lt $deadline)
+       if(-not $confirmed){throw 'Agent update not confirmed within 120 seconds'}
+       Step 'agent_verify' 'PASS' 'release manifest and update report agree'
      } else {Step 'agent_update' 'SKIPPED' 'installed release already matches'}
    }
    $report.success=$true
