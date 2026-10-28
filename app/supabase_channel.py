@@ -306,6 +306,32 @@ def submit_result(c, worker, task_id, result, lease_token, error=None):
         return bool(next(iter(rows[0].values())))
     return False
 
+def terminal_result_state(worker, task_id):
+    # A rejected result may belong to an already cancelled task. Check server
+    # status before releasing the local slot; never discard the local envelope.
+    q=urllib.parse.urlencode({"select":"status,error,worker_id", "task_id":"eq."+str(task_id), "limit":"1"})
+    rows=request("GET","/hands_commands?"+q) or []
+    if not isinstance(rows,list) or len(rows)!=1: return None
+    row=rows[0]
+    if row.get("worker_id")!=worker: return None
+    if row.get("status") in ("completed","error"):
+        return {"status":row["status"],"error":row.get("error")}
+    return None
+
+def preserve_terminal_result(task_id, result_file, terminal):
+    # Archive instead of deleting a rejected result. Atomic move prevents
+    # repeated retries while keeping evidence for subsequent investigation.
+    archive=DATA/"reconciled_results"
+    archive.mkdir(parents=True,exist_ok=True)
+    target=archive/(str(task_id)+".json")
+    if target.exists():
+        target=archive/(str(task_id)+"."+str(int(time.time()*1000))+".json")
+    os.replace(result_file,target)
+    event={"task_id":task_id,"server_status":terminal["status"],"server_error":terminal.get("error"),"archive":str(target),"at":time.time()}
+    with (archive/"reconciliation.jsonl").open("a",encoding="utf-8") as f:
+        f.write(json.dumps(event,ensure_ascii=False)+"\n")
+    return event
+
 def claimed_rows(c, worker):
     q = urllib.parse.urlencode({
         "select":"id,task_id,claimed_at,lease_token",
@@ -435,8 +461,15 @@ def main():
                             })
                         accepted=submit_result(c,worker,task_id,result,meta["lease_token"])
                         if not accepted:
-                            # Keep the result and the active lease for reconciliation.
-                            # A false response does not prove that the server accepted it.
+                            # A terminal server state is authoritative: preserve the
+                            # rejected envelope and free the local worker slot.
+                            terminal=terminal_result_state(worker,task_id)
+                            if terminal:
+                                preserve_terminal_result(task_id,result_file,terminal)
+                                active.pop(task_id,None)
+                                channel_progress("completed")
+                                continue
+                            # Unknown/active state: keep result and lease for recovery.
                             raise RuntimeError("result_not_accepted_preserved_for_reconciliation")
                         # Remove the local envelope only after server acceptance.
                         result_file.unlink(missing_ok=True)
