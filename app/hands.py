@@ -336,7 +336,18 @@ def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
         raise last_error
 OP_RU={"shell":"Команда","batch":"Пакетное выполнение","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","move_file":"Перемещение","delete":"Удаление","mkdir":"Создание папки","exists":"Проверка пути","stat":"Сведения о файле","read_file_chunk":"Чтение фрагмента файла","get_file_info":"Сведения о файле","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь","cleanup_preview":"Предпросмотр очистки"}
 def console(text):
-    print(sanitize_transport_value(str(text)), flush=True)
+    from datetime import datetime
+    message=sanitize_transport_value(str(text))
+    label=message.lstrip().upper()
+    if any(x in label for x in ('[ОШИБКА', '[ERROR', '❌')): icon='❌'
+    elif any(x in label for x in ('[ВНИМАНИЕ', '[WARNING', '❗')): icon='❗'
+    elif any(x in label for x in ('[ГОТОВО', '[РЕЗУЛЬТАТ', '[RECOVERY]', '✅')): icon='✅'
+    elif any(x in label for x in ('[ВЫПОЛНЯЕТСЯ', '[ЗАДАЧА', '[КОМАНДА', '[ПАКЕТ')): icon='⚙️'
+    elif any(x in label for x in ('[СОСТОЯНИЕ', '[СВЯЗЬ', '[ИСПОЛНИТЕЛЬ', '[ОЧЕРЕДЬ')): icon='🛠️'
+    else: icon='🔧'
+    stamp=datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+    for line in message.splitlines() or ['']:
+        if line.strip(): print(f'[{stamp}] {icon} {line}',flush=True)
 def safe_command_preview(value):
     import re
     text=str(value or "")
