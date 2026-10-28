@@ -3,7 +3,8 @@ param(
  [string]$ReleaseSha='',
  [string]$PreviousSha='',
  [string]$ProjectRef='igeddbknrctsdufieosg',
- [switch]$SkipLocalAgent
+ [switch]$SkipLocalAgent,
+ [switch]$MigrationsVerified
 )
 $ErrorActionPreference='Stop'
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -40,13 +41,22 @@ try {
  foreach($f in $functionNames){if(-not(Test-Path (Join-Path $repo "supabase/functions/$f/index.ts"))){throw "Missing function: $f"}}
  Step 'supabase_source' 'PASS' ($functionNames -join ',')
  if($PreviousSha) {
-  $changed=RunGit @('diff','--name-only',$PreviousSha,$ReleaseSha,'--','supabase/functions')
+  $changed=RunGit @('diff','--name-only',$PreviousSha,$head,'--','supabase/functions')
   $changedFunctions=@($changed -split "`n" | Where-Object { $_ -match '^supabase/functions/([^/]+)/' } | ForEach-Object {($_ -split '/')[2]} | Select-Object -Unique)
- } else { $changedFunctions=@() }
+  $migrationDiff=RunGit @('diff','--name-only',$PreviousSha,$head,'--','supabase/migrations')
+  $changedMigrations=@($migrationDiff -split "`n" | Where-Object { $_ -match '^supabase/migrations/.*\.sql$' })
+ } else { $changedFunctions=@(); $changedMigrations=@() }
  Step 'supabase_diff' 'PASS' ("changed_functions="+($changedFunctions -join ','))
+ Step 'supabase_migrations' $(if($changedMigrations.Count -eq 0 -or $MigrationsVerified){'PASS'}else{'REVIEW_REQUIRED'}) ("changed_migrations="+($changedMigrations -join ','))
+ if($Mode -eq 'Apply' -and $changedMigrations.Count -gt 0 -and -not $MigrationsVerified){throw 'Migration changes detected: apply and verify via Supabase MCP before release, then pass -MigrationsVerified'}
  if($Mode -eq 'Check'){
-   Step 'deployment' 'SKIPPED' 'check-only: nothing changed remotely'
-   $report.success=$true
+   if($changedMigrations.Count -gt 0 -and -not $MigrationsVerified){
+     Step 'deployment' 'REVIEW_REQUIRED' 'migration needs independently verified server application'
+     $report.success=$false
+   } else {
+     Step 'deployment' 'SKIPPED' 'check-only: nothing changed remotely'
+     $report.success=$true
+   }
  } else {
    if($remote -ne $head){throw 'origin/main differs from local HEAD; push reviewed commit first'}
    if(-not $PreviousSha){throw 'Apply requires PreviousSha for reliable server-change detection'}
