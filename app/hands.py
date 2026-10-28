@@ -201,6 +201,11 @@ SUPPORTED_OPERATIONS={
     "environment":"Environment variable names/selected values",
     "get_capabilities":"List Hands operations and runtime limits",
     "get_recent_tool_calls":"Read bounded, metadata-only local task history",
+    "diagnose_all":"Read-only consolidated transport, executor, queue and updater diagnostics",
+    "task_monitor":"Read-only summary of running and queued local tasks",
+    "update_status":"Read-only installed agent release and last updater outcome",
+    "usage_stats":"Aggregated metadata-only task success, failure and duration statistics",
+    "auto_recovery":"Safe recovery assessment; never restarts or deletes automatically",
     "health":"Executor/transport health snapshot",
     "local_queue":"Local inbox/running/outbox queue snapshot",
     "cleanup_preview":"Preview old local Hands artifacts without deleting them",
@@ -578,6 +583,47 @@ def execute(c):
                     if len(items)>1000: items.pop(0)
                 except (ValueError,TypeError): continue
         return {"count":min(limit,len(items)),"items":items[-limit:][::-1],"metadata_only":True}
+    if op=="auto_recovery":
+        health=health_snapshot()
+        actions=[]
+        if not health["transport_online"]: actions.append("inspect_transport_connection")
+        if not health["executor_online"]: actions.append("inspect_executor_process")
+        if health["queue_stalled"]: actions.append("inspect_queue_before_replay")
+        return {"mode":"assessment_only","recommendations":actions,"automatic_actions_taken":0,"read_only":True}
+    if op=="usage_stats":
+        history=DATA/"tool-history.jsonl"
+        rows=[]
+        if history.exists():
+            with history.open("r",encoding="utf-8",errors="replace") as f:
+                for line in f:
+                    try:
+                        item=json.loads(line)
+                        if isinstance(item,dict) and "status" in item:
+                            rows.append(item)
+                            if len(rows)>1000: rows.pop(0)
+                    except (ValueError,TypeError): pass
+        completed=sum(1 for x in rows if x.get("status")=="completed")
+        errors=sum(1 for x in rows if x.get("status")=="error")
+        durations=[int(x.get("duration_ms") or 0) for x in rows]
+        return {"sample_count":len(rows),"completed":completed,"errors":errors,"other":len(rows)-completed-errors,"average_duration_ms":round(sum(durations)/len(durations)) if durations else None,"metadata_only":True}
+    if op=="diagnose_all":
+        health=health_snapshot()
+        state=_json_state(STATE)
+        channel=_json_state(DATA/"supabase_channel_state.json")
+        issues=[]
+        if not health["transport_online"]: issues.append("transport_offline")
+        if not health["executor_online"]: issues.append("executor_offline")
+        if health["queue_stalled"]: issues.append("queue_stalled")
+        if state.get("loaded_hands_sha256")!=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(): issues.append("executor_code_mismatch")
+        return {"ready":not issues,"issues":issues,"health":health,"transport_active_count":channel.get("active_count",0),"read_only":True}
+    if op=="update_status":
+        state=_json_state(STATE)
+        report=_json_state(DATA/"agent_update_report.json")
+        return {"manifest":_json_state(ROOT/"manifest.json"),"loaded_hands_sha256":state.get("loaded_hands_sha256"),"disk_hands_sha256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),"operation_count":state.get("operation_count"),"last_update_ok":report.get("ok"),"read_only":True}
+    if op=="task_monitor":
+        state=_json_state(STATE)
+        channel=_json_state(DATA/"supabase_channel_state.json")
+        return {"active_tasks":state.get("active_tasks",[]),"active_count":state.get("active_count",0),"transport_active_count":channel.get("active_count",0),"queue_stalled":bool(channel.get("queue_stalled")),"read_only":True}
     if op=="agent_status":
         from agent_control import agent_status
         return agent_status()
