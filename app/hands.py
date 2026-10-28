@@ -163,6 +163,7 @@ SUPPORTED_OPERATIONS={
     "exists":"Check path existence",
     "stat":"Read file metadata",
     "read_file_chunk":"Read text file chunk",
+    "read_file_lines":"Read text file by bounded line range",
     "search_files":"Search files by name pattern",
     "read_multiple_files":"Read multiple text files",
     "get_file_info":"Read detailed file metadata",
@@ -176,6 +177,7 @@ SUPPORTED_OPERATIONS={
     "start_search":"Search text across files",
     "get_more_search_results":"Page search results",
     "stop_search":"Stop search session",
+    "list_searches":"List persisted search sessions",
     "edit_block":"Exact text replacement",
     "write_pdf":"Write simple PDF",
     "get_prompts":"List built-in prompts",
@@ -290,6 +292,17 @@ def compact_payload(task_id,payload,limit=DEFAULT_INLINE_RESULT_BYTES):
     if large:
         out["large_outputs"]=large
         out["output_truncated"]=True
+    # Enforce a final bound on the entire nested JSON payload, not just
+    # top-level string fields. The full payload stays on this PC.
+    encoded=json.dumps(out,ensure_ascii=False,default=str)
+    if len(encoded.encode("utf-8"))>49152:
+        meta=_store_large_text(task_id,"full_payload",encoded)
+        return {
+            "output_truncated":True,
+            "large_outputs":{"full_payload":meta},
+            "preview":encoded[:2048],
+            "reason":"nested_or_aggregate_payload_exceeded_48kib",
+        }
     return out
 
 def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
@@ -668,6 +681,20 @@ def execute(c):
         p=Path(str(c["path"])).resolve()
         if not p.exists(): raise FileNotFoundError(str(p))
         s=p.stat(); return {"path":str(p),"size":s.st_size,"created":s.st_ctime,"modified":s.st_mtime,"is_file":p.is_file(),"is_directory":p.is_dir()}
+    if op=="read_file_lines":
+        p=Path(str(c["path"])).resolve()
+        offset=max(0,int(c.get("offset") or 0))
+        length=max(1,min(200,int(c.get("length") or 50)))
+        rows=[]
+        eof=True
+        with p.open("r",encoding="utf-8",errors="replace") as stream:
+            for line_no,line in enumerate(stream):
+                if line_no<offset: continue
+                if len(rows)>=length:
+                    eof=False
+                    break
+                rows.append(line[:4096])
+        return {"path":str(p),"offset":offset,"next_offset":offset+len(rows),"lines":rows,"eof":eof}
     if op=="read_file_chunk":
         p=Path(str(c["path"])).resolve(); offset=max(0,int(c.get("offset") or 0)); length=max(0,int(c.get("length") or 65536))
         with p.open("r",encoding="utf-8",errors="replace") as f:
@@ -750,6 +777,16 @@ def execute(c):
         if not sp.exists(): raise FileNotFoundError(str(sp))
         m=json.loads(sp.read_text(encoding="utf-8")); rows=m.get("results",[]); chunk=rows[offset:offset+length]
         return {"sessionId":sid,"offset":offset,"nextOffset":offset+len(chunk),"count":len(rows),"results":chunk,"complete":offset+len(chunk)>=len(rows),"stopped":m.get("stopped",False)}
+    if op=="list_searches":
+        limit=max(1,min(100,int(c.get("limit") or 25)))
+        items=[]
+        for sp in sorted(PROCESS_DIR.glob("search-*.json"),key=lambda p:p.stat().st_mtime,reverse=True):
+            try:
+                m=json.loads(sp.read_text(encoding="utf-8"))
+                items.append({"sessionId":m.get("session_id") or sp.stem[7:],"count":len(m.get("results") or []),"stopped":bool(m.get("stopped")),"modified":sp.stat().st_mtime})
+                if len(items)>=limit: break
+            except (OSError,ValueError,TypeError): continue
+        return {"count":len(items),"items":items}
     if op=="stop_search":
         sid=str(c["sessionId"]); sp=PROCESS_DIR/f"search-{sid}.json"
         if not sp.exists(): raise FileNotFoundError(str(sp))

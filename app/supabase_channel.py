@@ -255,7 +255,7 @@ def requeue_claim(row, worker, reason):
     updated=request("PATCH","/hands_commands?"+q,{
         "status":"queued",
         "claimed_at":None,
-        "worker_id":None,
+        "worker_id":worker,
         "lease_token":None,
         "error":reason,
     }) or []
@@ -294,6 +294,11 @@ def submit_result(c, worker, task_id, result, lease_token, error=None):
         "p_result": result,
         "p_error": effective_error,
     }
+    # Fail closed before RPC: retain the local outbox item for recovery.
+    # Include envelope overhead, not merely result.payload size.
+    body_bytes=len(json.dumps(body,ensure_ascii=False,default=str).encode("utf-8"))
+    if body_bytes>65536:
+        raise ValueError(f"result_envelope_too_large: {body_bytes} bytes; retained in local outbox")
     rows = request("POST", "/rpc/hands_submit_result_atomic", body) or []
     if isinstance(rows, bool):
         return rows
@@ -430,9 +435,10 @@ def main():
                             })
                         accepted=submit_result(c,worker,task_id,result,meta["lease_token"])
                         if not accepted:
-                            save_state(status="stale_result_discarded",worker_id=worker,task_id=task_id)
-                        # The server now owns an accepted result. Keep large-output
-                        # artifacts in data/results, but remove the transient outbox envelope.
+                            # Keep the result and the active lease for reconciliation.
+                            # A false response does not prove that the server accepted it.
+                            raise RuntimeError("result_not_accepted_preserved_for_reconciliation")
+                        # Remove the local envelope only after server acceptance.
                         result_file.unlink(missing_ok=True)
                         active.pop(task_id,None)
                         channel_progress("completed")

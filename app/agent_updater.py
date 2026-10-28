@@ -29,6 +29,20 @@ def healthy(root,after,timeout=90):
             if s.get("heartbeat_ok") and s.get("executor_online") and not s.get("queue_stalled") and float(s.get("channel_started_at") or 0)>=after-3:return True
         except Exception: pass
     return False
+def require_idle(root):
+    """Fail closed: do not interrupt tasks during a release or rollback."""
+    state_path = root / "data" / "state.json"
+    channel_path = root / "data" / "supabase_channel_state.json"
+    for path in (state_path, channel_path):
+        if not path.is_file():
+            raise RuntimeError("cannot verify idle state: " + str(path))
+    executor = json.loads(state_path.read_text(encoding="utf-8-sig"))
+    channel = json.loads(channel_path.read_text(encoding="utf-8-sig"))
+    if int(executor.get("active_count") or 0) or executor.get("active_tasks"):
+        raise RuntimeError("agent has active tasks; update deferred")
+    if not channel.get("heartbeat_ok") or not channel.get("executor_online") or channel.get("queue_stalled"):
+        raise RuntimeError("agent not healthy; update deferred")
+
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument("--root",required=True); ap.add_argument("--release-sha"); ap.add_argument("--rollback",action="store_true"); a=ap.parse_args()
     root=Path(a.root).resolve(); data=root/"data"; data.mkdir(exist_ok=True)
@@ -39,6 +53,7 @@ def main():
         lock_file.close(); raise RuntimeError("another agent update/rollback is already running")
     stage=root/"update-stage-native"; previous=root/"previous-verified"; rp=data/"agent_update_report.json"
     rep={"ok":False,"mode":"rollback" if a.rollback else "update","release_sha":a.release_sha,"started_at":time.time()}; save(rp,rep)
+    runtime_changed=False
     try:
         if a.rollback:
             if not previous.is_dir(): raise RuntimeError("previous verified runtime unavailable")
@@ -56,10 +71,13 @@ def main():
             cp=subprocess.run([sys.executable,"-m","py_compile",str(stage/"app/hands.py"),str(stage/"app/supabase_channel.py"),str(stage/"app/agent_control.py"),str(stage/"app/agent_updater.py")],capture_output=True,text=True)
             if cp.returncode: raise RuntimeError("compile: "+cp.stderr[-1000:])
             source=stage
+            require_idle(root)
             if previous.exists(): shutil.rmtree(previous)
             (previous/"app").mkdir(parents=True); copyset(root,previous)
         hashes={rel:digest(source/rel) for rel in PAYLOAD if (source/rel).exists()}; rep["hashes"]=hashes; save(rp,rep)
-        stop(root,os.getpid()); copyset(source,root)
+        if not a.rollback:
+            require_idle(root)
+        stop(root,os.getpid()); runtime_changed=True; copyset(source,root)
         started=time.time()
         try:(data/"supabase_channel_state.json").unlink(missing_ok=True)
         except Exception:pass
@@ -79,7 +97,7 @@ def main():
         rep.update(ok=True,completed_at=time.time()); save(rp,rep)
     except Exception as e:
         rep["error"]=f"{type(e).__name__}: {e}"
-        if not a.rollback and previous.is_dir():
+        if runtime_changed and not a.rollback and previous.is_dir():
             try:
                 stop(root,os.getpid()); copyset(previous,root); started=time.time(); launch(root)
                 rep["rolled_back"]=True; rep["rollback_healthy"]=healthy(root,started)
