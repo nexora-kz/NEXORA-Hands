@@ -56,7 +56,7 @@ try {
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
     Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot 'app') | Out-Null
-    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/45acd9c6c8a9d9c8a88a9475a0a93e661c5c015a'
+    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/9bede38a7df08e9d6b9f3d0e7a6f54c6fcfc448e'
     $files = @(
         @{Rel='start.ps1';Sha256='39E2ED4190F080E8EF63D3F7874F06565D93BA04CCDE7907E43AC23CF75EEE6C'},
         @{Rel='stop.ps1';Sha256='6E94D8594B164A3C8D78DF2A32693C2672CCEE7F6DE70C7E637C3781A52BD360'},
@@ -65,7 +65,7 @@ try {
         @{Rel='app/supabase_channel.py';Sha256='516E39A5DAD794CA8CF7F9BC5478AD6FA9D2F3F79F9E6FE33925F015DDE909DF'},
         @{Rel='app/hands_supabase_config.json';Sha256='B85E4D6B9605134D0A4566BCC7FB8E0D17FED32AA49E5E9E459FE95962EFFBE9'},
         @{Rel='app/agent_control.py';Sha256='99FA097A40861338491EE3F1E9D6F1BDBC595FDB2EC6450A163DFC10F66D063D'},
-        @{Rel='app/agent_updater.py';Sha256='732FFBB9A251EF10A00190DD5F04A0D7E0DD1518D972B45B5845B18BF8D28817'}
+        @{Rel='app/agent_updater.py';Sha256='11FEEBDB3807D7A113D7CA38D5577A4EE740E3F5D44536FCC9FBC379EBA3BC1F'}
     )
     foreach ($file in $files) {
         $stagePath=Join-Path $stageRoot ($file.Rel -replace '/','\')
@@ -85,7 +85,7 @@ try {
     }
     try{
         foreach($file in $files){$rel=$file.Rel -replace '/','\'; $src=Join-Path $stageRoot $rel; $dst=Join-Path $runtimeRoot $rel; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst)|Out-Null; Copy-Item -LiteralPath $src -Destination $dst -Force}
-        @{release_sha='45acd9c6c8a9d9c8a88a9475a0a93e661c5c015a';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
+        @{release_sha='9bede38a7df08e9d6b9f3d0e7a6f54c6fcfc448e';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
     }catch{
         foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json','app\agent_control.py','app\agent_updater.py')){$backup=Join-Path $previousRoot $rel;if(Test-Path -LiteralPath $backup){$dst=Join-Path $runtimeRoot $rel;Copy-Item -LiteralPath $backup -Destination $dst -Force}}
         throw
