@@ -345,18 +345,25 @@ def console(text):
         message='[ТАЙМ-АУТ] Команда превысила лимит '+(match.group(1)+' сек' if match else 'времени')
     if len(message)>700:
         message=message[:700]+'... [СОКРАЩЕНО]'
-    label=message.lstrip().upper()
-    if '[ТАЙМ-АУТ]' in label: icon='⌛️'
-    elif any(x in label for x in ('[ОШИБКА', '[ERROR', '❌')): icon='❌'
-    elif '[ОЖИДАНИЕ' in label: icon='⏳'
-    elif any(x in label for x in ('[ВНИМАНИЕ', '[WARNING', '❗')): icon='❗'
-    elif any(x in label for x in ('[ГОТОВО', '[РЕЗУЛЬТАТ', '[RECOVERY]', '✅')): icon='✅'
-    elif any(x in label for x in ('[ВЫПОЛНЯЕТСЯ', '[ЗАДАЧА', '[КОМАНДА', '[ПАКЕТ')): icon='⚙️'
-    elif any(x in label for x in ('[СОСТОЯНИЕ', '[СВЯЗЬ', '[ИСПОЛНИТЕЛЬ', '[ОЧЕРЕДЬ')): icon='🛠️'
-    else: icon='🔧'
     stamp=datetime.now().strftime('%d.%m.%Y %H:%M:%S')
     for line in message.splitlines() or ['']:
-        if line.strip(): print(f'[{stamp}] {icon} {line}',flush=True)
+        line=line.strip()
+        if not line: continue
+        label=line.upper()
+        if '[ТАЙМ-АУТ]' in label: icon='⌛️'
+        elif '[ОШИБКА' in label or '[ERROR' in label: icon='❌'
+        elif '[ОЖИДАНИЕ' in label: icon='⏳'
+        elif '[ВРЕМЯ' in label: icon='⏱️'
+        elif '[РЕЗУЛЬТАТ' in label: icon='📋'
+        elif '[ВНИМАНИЕ' in label or '[WARNING' in label: icon='⚠️'
+        elif '[ГОТОВО' in label or '[RECOVERY]' in label: icon='✅'
+        elif '[ВЫПОЛНЯЕТСЯ' in label or '[ЗАДАЧА' in label or '[КОМАНДА' in label or '[ПАКЕТ' in label: icon='⚙️'
+        elif any(x in label for x in ('[СОСТОЯНИЕ','[СВЯЗЬ','[ИСПОЛНИТЕЛЬ','[ОЧЕРЕДЬ','[АКТИВНЫЕ ЗАДАЧИ')): icon='🛠️'
+        else: icon='🔧'
+        line=re.sub(r'^(?:⏳|⌛️|⏱️|⚙️|📋|⚠️|❌|✅|🔧|🛠️)\s*','',line)
+        line=re.sub(r'(?<=\])\s*(?:⏳|⌛️|⏱️|⚙️|📋|⚠️|❌|✅|🔧|🛠️)\s*',' ',line)
+        if not diagnostic_mode(): line=re.sub(r';\s*задача\s+hands-mcp-[0-9a-f-]+','',line,flags=re.I)
+        print(f'[{stamp}] {icon} {line}',flush=True)
 def safe_command_preview(value):
     import re
     text=str(value or "")
