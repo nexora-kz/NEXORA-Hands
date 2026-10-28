@@ -21,13 +21,21 @@ def launch(root):
     flags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0)|getattr(subprocess,"CREATE_NO_WINDOW",0)
     subprocess.Popen(["powershell.exe","-NoProfile","-ExecutionPolicy","RemoteSigned","-File",str(root/"start.ps1"),"-PythonPath",sys.executable],cwd=str(root),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=flags)
 def healthy(root,after,timeout=90):
-    state=root/"data/supabase_channel_state.json"
+    channel_state=root/"data/supabase_channel_state.json"
+    executor_state=root/"data/state.json"
+    expected=digest(root/"app/hands.py")
     for _ in range(timeout):
         time.sleep(1)
         try:
-            s=json.loads(state.read_text(encoding="utf-8-sig"))
-            if s.get("heartbeat_ok") and s.get("executor_online") and not s.get("queue_stalled") and float(s.get("channel_started_at") or 0)>=after-3:return True
-        except Exception: pass
+            s=json.loads(channel_state.read_text(encoding="utf-8-sig"))
+            e=json.loads(executor_state.read_text(encoding="utf-8-sig"))
+            transport_ok=(s.get("heartbeat_ok") and s.get("executor_online") and not s.get("queue_stalled")
+                          and float(s.get("channel_started_at") or 0)>=after-3)
+            executor_ok=(e.get("loaded_hands_sha256")==expected
+                         and float(e.get("executor_started_at") or 0)>=after-3
+                         and int(e.get("operation_count") or 0)>0)
+            if transport_ok and executor_ok:return True
+        except (OSError,ValueError,TypeError): pass
     return False
 def require_idle(root):
     """Fail closed: do not interrupt tasks during a release or rollback."""
@@ -38,8 +46,9 @@ def require_idle(root):
             raise RuntimeError("cannot verify idle state: " + str(path))
     executor = json.loads(state_path.read_text(encoding="utf-8-sig"))
     channel = json.loads(channel_path.read_text(encoding="utf-8-sig"))
-    if int(executor.get("active_count") or 0) or executor.get("active_tasks"):
-        raise RuntimeError("agent has active tasks; update deferred")
+    if (int(executor.get("active_count") or 0) or executor.get("active_tasks")
+            or int(channel.get("active_count") or 0) or channel.get("active_tasks")):
+        raise RuntimeError("agent has active executor/transport tasks; update deferred")
     if not channel.get("heartbeat_ok") or not channel.get("executor_online") or channel.get("queue_stalled"):
         raise RuntimeError("agent not healthy; update deferred")
 

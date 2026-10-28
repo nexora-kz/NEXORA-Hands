@@ -15,6 +15,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+# Capture the loaded executable fingerprint once, not the mutable file on disk.
+LOADED_HANDS_SHA256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
 os.environ.setdefault("PYTHONUTF8","1")
 os.environ.setdefault("PYTHONIOENCODING","utf-8")
 for _stream in (sys.stdout,sys.stderr):
@@ -311,7 +314,7 @@ def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
     metrics=_metrics_snapshot()
     payload=sanitize_transport_value({"name":"NEXORA Hands","status":status,"pid":os.getpid(),"task_id":task_id,"error":error,
              "active_tasks":tasks,"active_count":len(tasks),
-             "max_parallel_commands":int(max_parallel or max_parallel_commands()),"updated_at":time.time(),**metrics})
+             "max_parallel_commands":int(max_parallel or max_parallel_commands()),"loaded_hands_sha256":LOADED_HANDS_SHA256,"operation_count":len(SUPPORTED_OPERATIONS),"updated_at":time.time(),**metrics})
     tmp=STATE.with_name(f"{STATE.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
     data=json.dumps(payload,ensure_ascii=False,indent=2)
     with STATE_WRITE_LOCK:

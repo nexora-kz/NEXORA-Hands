@@ -87,6 +87,13 @@ try {
        if(-not $confirmed){throw 'Agent update not confirmed within 120 seconds'}
        Step 'agent_verify' 'PASS' 'release manifest and update report agree'
      } else {Step 'agent_update' 'SKIPPED' 'installed release already matches'}
+     $loaded=Get-Content (Join-Path $agent 'data/state.json') -Raw|ConvertFrom-Json
+     $expected=(Get-FileHash (Join-Path $agent 'app/hands.py') -Algorithm SHA256).Hash.ToLowerInvariant()
+     if($loaded.loaded_hands_sha256 -ne $expected){throw 'Live executor is running stale code despite matching disk files'}
+     if([int]$loaded.operation_count -lt 1){throw 'Live executor capability count unavailable'}
+     if(((Get-Date).ToUniversalTime()-[DateTimeOffset]::FromUnixTimeSeconds([long][math]::Floor([double]$loaded.updated_at)).UtcDateTime).TotalSeconds -gt 15){throw 'Live executor state is stale'}
+     if(-not(Get-Process -Id ([int]$loaded.pid) -ErrorAction SilentlyContinue)){throw 'Live executor PID not running'}
+     Step 'live_executor' 'PASS' "loaded_sha=$expected operations=$($loaded.operation_count)"
    }
    $report.success=$true
  }
