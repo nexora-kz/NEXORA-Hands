@@ -103,18 +103,20 @@ try {
         $restartHands = $false
         $restartChannel = $false
 
-        if ($null -eq $handsProc -or $handsProc.HasExited) { $restartHands = $true }
-        elseif ((State-AgeSeconds $HandsState 'updated_at') -gt 20) { $restartHands = $true }
+        $handsReason = ''
+        $channelReason = ''
+        if ($null -eq $handsProc -or $handsProc.HasExited) { $restartHands = $true; $handsReason = 'процесс завершился' }
+        elseif ((State-AgeSeconds $HandsState 'updated_at') -gt 20) { $restartHands = $true; $handsReason = 'нет сигнала состояния более 20 сек' }
 
-        if ($null -eq $channelProc -or $channelProc.HasExited) { $restartChannel = $true }
-        elseif ((State-AgeSeconds $ChannelState 'heartbeat_at') -gt 45) { $restartChannel = $true }
+        if ($null -eq $channelProc -or $channelProc.HasExited) { $restartChannel = $true; $channelReason = 'процесс завершился' }
+        elseif ((State-AgeSeconds $ChannelState 'heartbeat_at') -gt 45) { $restartChannel = $true; $channelReason = 'нет сигнала транспорта более 45 сек' }
 
         if ($restartHands) {
             if ($handsProc -and -not $handsProc.HasExited) { Stop-Process -Id $handsProc.Id -Force -ErrorAction SilentlyContinue }
             Stop-ExactPythonScript $Hands
             Start-Sleep -Milliseconds 500
             $handsProc = Start-HandsProcess
-            Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ♻️ [WATCHDOG] Исполнитель перезапущен."
+            Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ♻️ [WATCHDOG] Исполнитель перезапущен: $handsReason."
         }
 
         if ($restartChannel) {
@@ -122,7 +124,7 @@ try {
             Stop-ExactPythonScript $Channel
             Start-Sleep -Milliseconds 500
             $channelProc = Start-ChannelProcess
-            Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ♻️ [WATCHDOG] Транспорт перезапущен."
+            Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ♻️ [WATCHDOG] Транспорт перезапущен: $channelReason."
         }
     }
 }

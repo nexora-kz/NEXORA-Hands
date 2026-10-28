@@ -510,12 +510,15 @@ def console_task_result(payload,op):
         if out:
             console("[Результат] "+out[:4000])
     elif op=="health":
-        console(f"[Состояние] {'ГОТОВ' if payload.get('ready') else 'ТРЕБУЕТ ВНИМАНИЯ'}")
-        console(f"[Связь] {'Подключена' if payload.get('transport_online') else 'Нет связи'}")
-        console(f"[Исполнитель] {'Работает' if payload.get('executor_online') else 'Недоступен'}")
-        console(f"[Активные задачи] {payload.get('executor_active_count',0)} из {payload.get('max_parallel_commands','?')}")
-        console(f"[Очередь] {'Требует проверки' if payload.get('queue_stalled') else 'В норме'}")
-        console(f"[Последний сигнал] {_human_age(payload.get('transport_heartbeat_age_seconds'))}")
+        ready='ГОТОВ' if payload.get('ready') else 'ТРЕБУЕТ ВНИМАНИЯ'
+        link='подключена' if payload.get('transport_online') else 'нет связи'
+        executor='работает' if payload.get('executor_online') else 'недоступен'
+        active=payload.get('executor_active_count',0)
+        capacity=payload.get('max_parallel_commands','?')
+        queue='требует проверки' if payload.get('queue_stalled') else 'в норме'
+        console(f'[Состояние] Система: {ready} | Связь: {link}')
+        console(f'[Результат] Исполнитель: {executor} | Задачи: {active}/{capacity}')
+        console(f'[Очередь] {queue}')
     elif op=="local_queue":
         counts=payload.get("counts") or {}
         console(f"[Результат] queued={counts.get('queued_local',0)} | running={counts.get('running_local',0)} | pending={counts.get('pending_results',0)}")
@@ -1106,12 +1109,7 @@ def process_running(running):
                         console(f"[РЕЗУЛЬТАТ {task}] "+str(out).strip()[:4000])
                 else:
                     console_task_result(payload,op)
-                    if op=="health":
-                        if payload.get("ready"):
-                            console("[ГОТОВО] Система работает нормально")
-                        else:
-                            console("[ВНИМАНИЕ] Система требует проверки")
-                    else:
+                    if op!="health":
                         console("[ГОТОВО] Выполнено успешно")
                 console(f'[ВРЕМЯ] ⏱️ {completed-started:.1f} сек; задача {task}')
         except Exception as e:
