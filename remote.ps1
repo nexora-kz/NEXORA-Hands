@@ -93,7 +93,7 @@ try {
     Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
     $startPath = Join-Path $runtimeRoot 'start.ps1'
     $bytes = [IO.File]::ReadAllBytes($startPath)
-    if (@($bytes | Where-Object { $_ -ge 128 }).Count -ne 0) { throw 'start.ps1 must be ASCII-only' }
+    if ($bytes.Length -lt 3 -or $bytes[0] -ne 239 -or $bytes[1] -ne 187 -or $bytes[2] -ne 191) { throw 'start.ps1 must have UTF-8 BOM for Windows PowerShell' }
     & $startPath -PythonPath $python
     $rc = $LASTEXITCODE
     if ($rc -ne 0) {

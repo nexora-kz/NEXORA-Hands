@@ -1,4 +1,4 @@
-param([string]$PythonPath = '')
+﻿param([string]$PythonPath = '')
 $ErrorActionPreference = 'Stop'
 $Utf8NoBom = [Text.UTF8Encoding]::new($false)
 try { [Console]::InputEncoding = $Utf8NoBom } catch {}
