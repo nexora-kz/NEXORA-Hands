@@ -338,8 +338,17 @@ OP_RU={"shell":"Команда","batch":"Пакетное выполнение",
 def console(text):
     from datetime import datetime
     message=sanitize_transport_value(str(text))
+    import re
+    message=re.sub(r'(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}',r'\1[СКРЫТО]',message)
+    if 'timed out after ' in message and ('-EncodedCommand' in message or 'Command ' in message):
+        match=re.search(r'timed out after (\d+(?:\.\d+)?) seconds',message)
+        message='[ТАЙМ-АУТ] Команда превысила лимит '+(match.group(1)+' сек' if match else 'времени')
+    if len(message)>700:
+        message=message[:700]+'... [СОКРАЩЕНО]'
     label=message.lstrip().upper()
-    if any(x in label for x in ('[ОШИБКА', '[ERROR', '❌')): icon='❌'
+    if '[ТАЙМ-АУТ]' in label: icon='⌛️'
+    elif any(x in label for x in ('[ОШИБКА', '[ERROR', '❌')): icon='❌'
+    elif '[ОЖИДАНИЕ' in label: icon='⏳'
     elif any(x in label for x in ('[ВНИМАНИЕ', '[WARNING', '❗')): icon='❗'
     elif any(x in label for x in ('[ГОТОВО', '[РЕЗУЛЬТАТ', '[RECOVERY]', '✅')): icon='✅'
     elif any(x in label for x in ('[ВЫПОЛНЯЕТСЯ', '[ЗАДАЧА', '[КОМАНДА', '[ПАКЕТ')): icon='⚙️'
@@ -358,6 +367,7 @@ def safe_command_preview(value):
     ]
     for pattern in patterns:
         text=re.sub(pattern,lambda m: m.group(1)+m.group(2)+"[REDACTED]",text)
+    text=re.sub(r'(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}',r'\1[СКРЫТО]',text)
     return text if len(text)<=500 else text[:500]+"... [TRUNCATED]"
 def _human_age(value):
     try:
@@ -1058,6 +1068,7 @@ def process_running(running):
             console(f"[ВЫПОЛНЯЕТСЯ {task}]")
         else:
             console_task_start(c,op,title)
+        console(f'[ОЖИДАНИЕ] ⏳ Выполняется: {title}; задача {task}')
         try:
             payload=compact_payload(task,execute(c))
             completed=time.time()
@@ -1074,6 +1085,7 @@ def process_running(running):
                 out=str(payload.get("stdout") or "").strip()
                 detail=err or out or f"Код возврата: {rc}"
                 console((f"[ОШИБКА {task}] " if diagnostic_mode() else "[ОШИБКА] ")+detail[:4000])
+                console(f'[ВРЕМЯ] ⏱️ {completed-started:.1f} сек; задача {task}')
             else:
                 result={"task_id":task,"status":"completed","stage":"completed","payload":payload,
                         "timing":{"started_at":started,"completed_at":completed,
@@ -1094,6 +1106,7 @@ def process_running(running):
                             console("[ВНИМАНИЕ] Система требует проверки")
                     else:
                         console("[ГОТОВО] Выполнено успешно")
+                console(f'[ВРЕМЯ] ⏱️ {completed-started:.1f} сек; задача {task}')
         except Exception as e:
             completed=time.time()
             result={"task_id":task,"status":"error","stage":"failed","error":f"{type(e).__name__}: {e}",
@@ -1102,6 +1115,7 @@ def process_running(running):
             metrics=_metrics_snapshot()
             _update_metrics(last_completed_at=completed,failed_count=int(metrics.get("failed_count") or 0)+1)
             console((f"[ОШИБКА {task}] " if diagnostic_mode() else "[ОШИБКА] ")+str(e))
+            console(f'[ВРЕМЯ] ⏱️ {completed-started:.1f} сек; задача {task}')
     except Exception as e:
         completed=time.time()
         result={"task_id":task,"status":"error","stage":"failed","error":f"{type(e).__name__}: {e}",
