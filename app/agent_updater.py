@@ -15,11 +15,11 @@ def copyset(src,dst):
             d=dst/rel; d.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(s,d)
 def stop(root,own):
     q=str(root).lower().replace("'","''")
-    ps=f"""Get-CimInstance Win32_Process|Where-Object {{$_.ProcessId -ne {own} -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains('{q}') -and ($_.CommandLine -match 'hands\\.py|supabase_channel\\.py')}}|ForEach-Object{{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}}"""
-    subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",ps],capture_output=True); time.sleep(1)
+    ps=f"""$all=@(Get-CimInstance Win32_Process); $agents=@($all|Where-Object {{$_.ProcessId -ne {own} -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains('{q}') -and ($_.CommandLine -match 'hands\\.py|supabase_channel\\.py')}}); $hosts=@($all|Where-Object {{$_.Name -match '^(powershell|pwsh)\\.exe$' -and $_.CommandLine -and ($_.CommandLine -match 'NEXORA-Hands-remote\\.ps1' -or ($_.CommandLine.ToLowerInvariant().Contains('{q}') -and $_.CommandLine -match 'start\\.ps1'))}}); @($agents)+@($hosts)|Where-Object {{$_ -and $_.ProcessId -ne {own}}}|Sort-Object ProcessId -Unique|ForEach-Object {{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}}"""
+    subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",ps],capture_output=True); time.sleep(2)
 def launch(root):
-    flags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0)|getattr(subprocess,"CREATE_NO_WINDOW",0)
-    subprocess.Popen(["powershell.exe","-NoProfile","-ExecutionPolicy","RemoteSigned","-File",str(root/"start.ps1"),"-PythonPath",sys.executable],cwd=str(root),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=flags)
+    flags=getattr(subprocess,"CREATE_NEW_CONSOLE",0)
+    subprocess.Popen(["powershell.exe","-NoProfile","-ExecutionPolicy","RemoteSigned","-File",str(root/"start.ps1"),"-PythonPath",sys.executable],cwd=str(root),stdin=subprocess.DEVNULL,creationflags=flags)
 def healthy(root,after,timeout=90):
     channel_state=root/"data/supabase_channel_state.json"
     executor_state=root/"data/state.json"
