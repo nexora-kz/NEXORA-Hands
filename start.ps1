@@ -47,7 +47,7 @@ $OwnsHostMutex = $false
 try { $OwnsHostMutex = $HostMutex.WaitOne(0) }
 catch [System.Threading.AbandonedMutexException] { $OwnsHostMutex = $true }
 if (-not $OwnsHostMutex) {
-    Write-Host 'NEXORA Hands - already connected.'
+    Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ✅ NEXORA Hands уже подключён."
     exit 0
 }
 
@@ -94,8 +94,8 @@ try {
         } catch {}
         Start-Sleep -Seconds 1
     }
-    if (-not $connected) { Write-Host 'NEXORA Hands - connection failed.'; exit 1 }
-    Write-Host 'NEXORA Hands - connected.'
+    if (-not $connected) { Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ❌ NEXORA Hands: соединение не установлено."; exit 1 }
+    Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] 🔌 NEXORA Hands подключён."
 
     while ($true) {
         Start-Sleep -Seconds 2
@@ -114,7 +114,7 @@ try {
             Stop-ExactPythonScript $Hands
             Start-Sleep -Milliseconds 500
             $handsProc = Start-HandsProcess
-            Write-Host '[WATCHDOG] Executor restarted.'
+            Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ♻️ [WATCHDOG] Исполнитель перезапущен."
         }
 
         if ($restartChannel) {
@@ -122,7 +122,7 @@ try {
             Stop-ExactPythonScript $Channel
             Start-Sleep -Milliseconds 500
             $channelProc = Start-ChannelProcess
-            Write-Host '[WATCHDOG] Transport restarted.'
+            Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ♻️ [WATCHDOG] Транспорт перезапущен."
         }
     }
 }

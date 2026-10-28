@@ -27,6 +27,10 @@ OUTBOX.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 _LAST_EVENT_SIGNATURE=None
 
+def channel_console(icon, message):
+    stamp=datetime.now().astimezone().strftime('%d.%m.%Y %H:%M:%S')
+    print(f'[{stamp}] {icon} {message}', flush=True)
+
 DEFAULT_MAX_PARALLEL_COMMANDS = 5
 CHANNEL_STARTED_AT=time.time()
 CHANNEL_METRICS={
@@ -407,6 +411,7 @@ def main():
         worker=str(c.get("worker_id") or "")
     if not worker:
         raise RuntimeError("worker_id is empty after registration")
+    channel_console('🔌', 'Агент зарегистрирован; подключение к Supabase')
     poll=max(0.1,float(c.get("poll_seconds") or 1.0))
     heartbeat_seconds=max(5.0,float(c.get("heartbeat_seconds") or 15))
     lease_interval=max(5.0,min(30.0,heartbeat_seconds))
@@ -414,6 +419,7 @@ def main():
     next_heartbeat=0.0
     last_heartbeat_ok=False
     active,repaired_legacy=adopt_local_claims(c,worker)
+    channel_console('🚀', f'Транспорт запущен; активных заданий: {len(active)}')
     save_state(status="starting",worker_id=worker,max_parallel_commands=limit,
                active_count=len(active),active_tasks=sorted(active),
                repaired_legacy_claims=repaired_legacy)
@@ -466,6 +472,7 @@ def main():
                             terminal=terminal_result_state(worker,task_id)
                             if terminal:
                                 preserve_terminal_result(task_id,result_file,terminal)
+                                channel_console('♻️', f'Отменённый результат {task_id} сохранён для диагностики')
                                 active.pop(task_id,None)
                                 channel_progress("completed")
                                 continue
@@ -473,6 +480,7 @@ def main():
                             raise RuntimeError("result_not_accepted_preserved_for_reconciliation")
                         # Remove the local envelope only after server acceptance.
                         result_file.unlink(missing_ok=True)
+                        channel_console('✅', f'Результат {task_id} доставлен; активных: {len(active)-1}/{limit}')
                         active.pop(task_id,None)
                         channel_progress("completed")
                         continue
@@ -485,6 +493,7 @@ def main():
                     # A single malformed/failed result must not block the other
                     # worker slots or stop claiming new commands.
                     result_submit_errors[task_id]=f"{type(task_error).__name__}: {task_error}"
+                    channel_console('⚠️', f'Ошибка доставки {task_id}: {type(task_error).__name__}')
                     continue
 
             while len(active)<limit:
@@ -492,6 +501,7 @@ def main():
                 if not cmd:
                     break
                 task_id=dispatch_claimed(cmd)
+                channel_console('📡', f'Получено задание {task_id}; занято слотов: {len(active)+1}/{limit}')
                 active[task_id]=active_entry(cmd)
 
             save_state(status="busy" if active else "idle",worker_id=worker,
@@ -500,6 +510,7 @@ def main():
                        error=("; ".join(f"{k}: {v}" for k,v in sorted(result_submit_errors.items())) if result_submit_errors else ""),
                        result_submit_errors=result_submit_errors)
         except Exception as e:
+            channel_console('❌', f'Ошибка транспорта: {type(e).__name__}')
             save_state(status="error",worker_id=worker,error=f"{type(e).__name__}: {e}",
                        max_parallel_commands=limit,active_count=len(active),active_tasks=sorted(active))
         time.sleep(poll)
