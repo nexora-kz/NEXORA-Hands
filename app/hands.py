@@ -1049,9 +1049,25 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         folder.mkdir(parents=True,exist_ok=True)
         file=folder/(f"screen_{int(time.time())}_{uuid.uuid4().hex[:8]}.png")
         image.save(file,format="PNG",optimize=True)
-        return {"path":str(file),"width":image.width,"height":image.height,
+        result={"path":str(file),"width":image.width,"height":image.height,
                 "bytes":file.stat().st_size,"sha256":hashlib.sha256(file.read_bytes()).hexdigest(),
                 "read_only":True,"image_included":False}
+        if bool(c.get("inline_preview")):
+            # Keep JSON result under the transport's compact payload limit.
+            import io
+            preview=image.convert("RGB")
+            quality=68
+            while True:
+                buffer=io.BytesIO()
+                preview.save(buffer,format="JPEG",quality=quality,optimize=True)
+                if len(buffer.getvalue())<=24000 or preview.width<=320:
+                    break
+                preview.thumbnail((max(320,int(preview.width*.8)),max(180,int(preview.height*.8))))
+            result.update({"preview_mime":"image/jpeg",
+                           "preview_base64":base64.b64encode(buffer.getvalue()).decode("ascii"),
+                           "preview_width":preview.width,"preview_height":preview.height,
+                           "image_included":True})
+        return result
     if op=="window_list":
         ps="$ErrorActionPreference='Stop'; Get-Process | Where-Object {$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle} | Select-Object Id,ProcessName,MainWindowTitle | ConvertTo-Json -Compress -Depth 3"
         r=subprocess.run(powershell_args(ps),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=20)
