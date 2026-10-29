@@ -156,6 +156,7 @@ def diagnostic_mode():
 SUPPORTED_OPERATIONS={
     "shell":"PowerShell command",
     "window_list":"List visible top-level application windows (read only)",
+    "ui_elements":"Enumerate native Windows child controls for the foreground window (read only)",
     "screen_capture":"Capture current desktop to a bounded local PNG (read only)",
     "cursor_status":"Read cursor position and foreground window (read only)",
     "visual_sequence":"Run a short guarded sequence of desktop input with foreground checks",
@@ -1043,6 +1044,57 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
+    if op=="ui_elements":
+        import ctypes
+        from ctypes import wintypes
+        u=ctypes.WinDLL("user32",use_last_error=True)
+        u.GetForegroundWindow.restype=wintypes.HWND
+        hwnd=u.GetForegroundWindow()
+        if not hwnd or int(c.get("target_hwnd") or 0)!=int(hwnd):
+            raise PermissionError("target window must be foreground")
+        title=ctypes.create_unicode_buffer(512)
+        u.GetWindowTextW(hwnd,title,512)
+        if not title.value:
+            raise PermissionError("untitled foreground window")
+        class RECT(ctypes.Structure):
+            _fields_=[("left",wintypes.LONG),("top",wintypes.LONG),
+                      ("right",wintypes.LONG),("bottom",wintypes.LONG)]
+        u.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(RECT)]
+        u.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
+        u.GetWindowTextW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
+        u.IsWindowVisible.argtypes=[wintypes.HWND]
+        CALLBACK=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+        elements=[]
+        limit=max(1,min(200,int(c.get("limit") or 80)))
+        def callback(child,_):
+            if len(elements)>=limit:
+                return False
+            if not u.IsWindowVisible(child):
+                return True
+            cls=ctypes.create_unicode_buffer(128)
+            u.GetClassNameW(child,cls,128)
+            rect=RECT()
+            if not u.GetWindowRect(child,ctypes.byref(rect)):
+                return True
+            if rect.right<=rect.left or rect.bottom<=rect.top:
+                return True
+            kind=cls.value
+            # Never read the contents of editable/password fields.
+            safe_label=kind.lower() in ("button","static","syslink","combobox")
+            caption=""
+            if safe_label:
+                buf=ctypes.create_unicode_buffer(256)
+                u.GetWindowTextW(child,buf,256)
+                caption=buf.value[:120]
+            elements.append({"hwnd":int(child),"class":kind,"label":caption,
+                             "bounds":[rect.left,rect.top,rect.right,rect.bottom],
+                             "center":[(rect.left+rect.right)//2,(rect.top+rect.bottom)//2]})
+            return True
+        u.EnumChildWindows.argtypes=[wintypes.HWND,CALLBACK,wintypes.LPARAM]
+        u.EnumChildWindows(hwnd,CALLBACK(callback),0)
+        return {"target_hwnd":int(hwnd),"title":title.value,"elements":elements,
+                "count":len(elements),"limit":limit,"read_only":True,
+                "note":"Win32 controls only; custom-drawn UI may not expose child elements"}
     if op in ("visual_stop","visual_status"):
         run_id=str(c.get("run_id") or "")
         if not re.fullmatch(r"[a-f0-9]{32}",run_id):
