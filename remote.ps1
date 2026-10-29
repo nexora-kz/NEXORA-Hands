@@ -72,7 +72,8 @@ try {
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stagePath) | Out-Null
         Invoke-WebRequest -UseBasicParsing -Uri "$rawBase/$($file.Rel)" -OutFile $stagePath
         if ((Get-Item -LiteralPath $stagePath).Length -lt 100) { throw 'download too small' }
-        $actualHash=(Get-FileHash -LiteralPath $stagePath -Algorithm SHA256).Hash.ToUpperInvariant()
+        $sha256=[Security.Cryptography.SHA256]::Create()
+        try { $stream=[IO.File]::OpenRead($stagePath); try { $actualHash=[BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-','') } finally { $stream.Dispose() } } finally { $sha256.Dispose() }
         if ($actualHash -ne $file.Sha256) { throw "runtime integrity check failed: $($file.Rel)" }
     }
     & $python -m py_compile (Join-Path $stageRoot 'app\hands.py') (Join-Path $stageRoot 'app\supabase_channel.py') (Join-Path $stageRoot 'app\agent_control.py') (Join-Path $stageRoot 'app\agent_updater.py')
