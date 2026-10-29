@@ -154,6 +154,7 @@ def diagnostic_mode():
 
 SUPPORTED_OPERATIONS={
     "shell":"PowerShell command",
+    "window_list":"List visible top-level application windows (read only)",
     "batch":"Execute up to 5 Hands operations concurrently",
     "read_file":"Read a UTF-8 text file",
     "write_file":"Write a UTF-8 text file",
@@ -1027,6 +1028,13 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
+    if op=="window_list":
+        ps="$ErrorActionPreference='Stop'; Get-Process | Where-Object {$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle} | Select-Object Id,ProcessName,MainWindowTitle | ConvertTo-Json -Compress -Depth 3"
+        r=subprocess.run(powershell_args(ps),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=20)
+        if r.returncode: raise RuntimeError("window_list failed: "+r.stderr[-500:])
+        raw=r.stdout.strip()
+        result=json.loads(raw) if raw else []
+        return {"windows":result if isinstance(result,list) else [result],"read_only":True}
     if op=="system_info":
         return {"hostname":socket.gethostname(),"platform":platform.platform(),"system":platform.system(),"release":platform.release(),"version":platform.version(),"machine":platform.machine(),"python":platform.python_version(),"processor":platform.processor(),"cpu_count":os.cpu_count()}
     if op=="system_resources":
