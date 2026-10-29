@@ -1164,7 +1164,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
             raise ValueError("search area must fit within 800x600 and contain template")
         area=desktop.crop((left,top,right,bottom)).convert("RGB")
         # Grayscale 1/4-size candidate scan, then refine around best candidates.
-        scale=4
+        scale=8
         small=area.resize((max(1,area.width//scale),max(1,area.height//scale)))
         needle=patch.resize((max(1,patch.width//scale),max(1,patch.height//scale)))
         best=[]
@@ -1178,8 +1178,8 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                     best=best[:4]
         final=(1.0,None,None)
         for _,cx,cy in best:
-            for y in range(max(0,cy-5),min(area.height-patch.height,cy+5)+1):
-                for x in range(max(0,cx-5),min(area.width-patch.width,cx+5)+1):
+            for y in range(max(0,cy-9),min(area.height-patch.height,cy+9)+1):
+                for x in range(max(0,cx-9),min(area.width-patch.width,cx+9)+1):
                     diff=ImageChops.difference(patch,area.crop((x,y,x+patch.width,y+patch.height)))
                     score=sum(ImageStat.Stat(diff).mean)/(3*255)
                     if score<final[0]:
@@ -1200,9 +1200,9 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                     continue
                 diff=ImageChops.difference(needle,small.crop((x,y,x+needle.width,y+needle.height)))
                 if sum(ImageStat.Stat(diff).mean)/(3*255)<=max(0.12,threshold*4):
-                    for yy in range(max(0,yy-4),min(area.height-patch.height,yy+4)+1):
+                    for yy in range(max(0,yy-8),min(area.height-patch.height,yy+8)+1):
                         if second: break
-                        for xx2 in range(max(0,xx-4),min(area.width-patch.width,xx+4)+1):
+                        for xx2 in range(max(0,xx-8),min(area.width-patch.width,xx+8)+1):
                             if abs(xx2-final[1])<patch.width and abs(yy-final[2])<patch.height:
                                 continue
                             exact=ImageChops.difference(patch,area.crop((xx2,yy,xx2+patch.width,yy+patch.height)))
