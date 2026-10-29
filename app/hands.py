@@ -1073,6 +1073,15 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         run_id=str(c.get("run_id") or uuid.uuid4().hex)
         if not re.fullmatch(r"[a-f0-9]{32}",run_id):
             raise ValueError("run_id must be 32 lowercase hex characters")
+        # Optional deterministic visual change gate (not semantic OCR).
+        for step in steps:
+            if "expect_change" in step:
+                value=step["expect_change"]
+                if type(value) is not bool:
+                    raise ValueError("expect_change must be a boolean")
+                threshold=step.get("change_threshold",0.005)
+                if not isinstance(threshold,(float,int)) or not 0.0<float(threshold)<1.0:
+                    raise ValueError("change_threshold must be between 0 and 1")
         # Validate all steps before the first input event.
         for step in steps:
             if not isinstance(step,dict) or step.get("operation") not in ("mouse_action","keyboard_action"):
@@ -1118,8 +1127,20 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                 if time.monotonic()-started>20:
                     raise TimeoutError("visual sequence exceeded 20 seconds")
                 guard_window()
+                before=None
+                if "expect_change" in step:
+                    from PIL import ImageGrab,ImageChops,ImageStat
+                    # Primary desktop coordinates; compare a stable window rectangle.
+                    bounds=guard_window()["bounds"]
+                    box=(max(0,bounds[0]),max(0,bounds[1]),
+                         min(ImageGrab.grab().width,bounds[2]),
+                         min(ImageGrab.grab().height,bounds[3]))
+                    if box[2]<=box[0] or box[3]<=box[1]:
+                        raise ValueError("target window outside primary screen")
+                    before=desktop.crop(box).convert("RGB")
+                    before.thumbnail((640,360))
                 action=step["operation"]
-                command={k:v for k,v in step.items() if k not in ("confirm","target_hwnd")}
+                command={k:v for k,v in step.items() if k not in ("confirm","target_hwnd","expect_change","change_threshold")}
                 command.update({"operation":action,"confirm":True,"target_hwnd":hwnd})
                 result=execute(command)
                 state["completed"]+=1
@@ -1134,6 +1155,21 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                                  "inline_preview":False})
                 item["capture"]={"path":capture["path"],"sha256":capture["sha256"],
                                  "width":capture["width"],"height":capture["height"]}
+                if before is not None:
+                    after=ImageGrab.grab().crop(box).convert("RGB")
+                    after=after.resize(before.size)
+                    difference=ImageChops.difference(before,after)
+                    # Mean RGB absolute difference normalized to [0,1].
+                    score=sum(ImageStat.Stat(difference).mean)/(3*255)
+                    expected=step["expect_change"]
+                    threshold=float(step.get("change_threshold",0.005))
+                    passed=(score>=threshold) if expected else (score<threshold)
+                    item["visual_check"]={"expected_change":expected,
+                                          "change_score":round(score,6),
+                                          "threshold":threshold,"passed":passed}
+                    save()
+                    if not passed:
+                        raise RuntimeError("visual change check failed at step "+str(index))
                 save()
                 if index<len(steps)-1:
                     time.sleep(0.08)
