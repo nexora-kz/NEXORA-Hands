@@ -106,6 +106,7 @@ for p in (INBOX,OUTBOX): p.mkdir(parents=True,exist_ok=True)
 DEFAULT_MAX_PARALLEL_COMMANDS=5
 DEFAULT_INLINE_RESULT_BYTES=65536
 STATE_WRITE_LOCK=threading.Lock()
+VISUAL_SEQUENCE_LOCK=threading.Lock()
 EXECUTOR_STARTED_AT=time.time()
 METRICS_LOCK=threading.Lock()
 RUNTIME_METRICS={
@@ -159,6 +160,7 @@ SUPPORTED_OPERATIONS={
     "cursor_status":"Read cursor position and foreground window (read only)",
     "visual_sequence":"Run a short guarded sequence of desktop input with foreground checks",
     "visual_stop":"Request cancellation of a visual sequence by its run_id",
+    "visual_status":"Read persisted progress of a visual sequence",
     "mouse_action":"Guarded mouse move/click/scroll on an explicitly targeted foreground window",
     "keyboard_action":"Guarded text or allowlisted key input on an explicitly targeted foreground window",
     "batch":"Execute up to 5 Hands operations concurrently",
@@ -1041,12 +1043,22 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
-    if op=="visual_stop":
+    if op in ("visual_stop","visual_status"):
         run_id=str(c.get("run_id") or "")
         if not re.fullmatch(r"[a-f0-9]{32}",run_id):
             raise ValueError("valid run_id required")
         folder=DATA/"visual_runs"
         folder.mkdir(parents=True,exist_ok=True)
+        state_file=folder/(run_id+".json")
+        if op=="visual_status":
+            if not state_file.is_file():
+                return {"run_id":run_id,"found":False}
+            return json.loads(state_file.read_text(encoding="utf-8"))
+        if not state_file.is_file():
+            return {"run_id":run_id,"stop_requested":False,"reason":"run not found"}
+        state=json.loads(state_file.read_text(encoding="utf-8"))
+        if state.get("status") not in ("running","pending"):
+            return {"run_id":run_id,"stop_requested":False,"reason":"run already finished"}
         (folder/(run_id+".stop")).write_text("stop",encoding="ascii")
         return {"run_id":run_id,"stop_requested":True}
     if op=="visual_sequence":
@@ -1061,39 +1073,91 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         run_id=str(c.get("run_id") or uuid.uuid4().hex)
         if not re.fullmatch(r"[a-f0-9]{32}",run_id):
             raise ValueError("run_id must be 32 lowercase hex characters")
+        # Validate all steps before the first input event.
+        for step in steps:
+            if not isinstance(step,dict) or step.get("operation") not in ("mouse_action","keyboard_action"):
+                raise ValueError("only mouse_action and keyboard_action allowed")
+            if step["operation"]=="mouse_action" and step.get("action") not in ("move","click","scroll"):
+                raise ValueError("unsupported mouse action")
+            if step["operation"]=="keyboard_action" and step.get("action") not in ("text","key"):
+                raise ValueError("unsupported keyboard action")
+        if not VISUAL_SEQUENCE_LOCK.acquire(blocking=False):
+            raise RuntimeError("another visual sequence is active")
         folder=DATA/"visual_runs"
         folder.mkdir(parents=True,exist_ok=True)
+        state_file=folder/(run_id+".json")
         marker=folder/(run_id+".stop")
+        if state_file.exists():
+            VISUAL_SEQUENCE_LOCK.release()
+            raise ValueError("run_id already exists")
         started=time.monotonic()
-        results=[]
-        # Every step delegates to the same guarded operations; no arbitrary shell.
+        state={"run_id":run_id,"target_hwnd":hwnd,"status":"pending","completed":0,
+               "total":len(steps),"steps":[],"created_at":time.time()}
+        def save():
+            tmp=state_file.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(state,ensure_ascii=False),encoding="utf-8")
+            tmp.replace(state_file)
+        def guard_window():
+            observed=execute({"operation":"cursor_status"})["foreground"]
+            if observed["hwnd"]!=hwnd or not observed["title"]:
+                raise PermissionError("target window lost foreground")
+            if observed["pid"]!=initial["pid"]:
+                raise PermissionError("target process changed")
+            return observed
         try:
+            save()
+            initial=execute({"operation":"cursor_status"})["foreground"]
+            if initial["hwnd"]!=hwnd or not initial["title"]:
+                raise PermissionError("target window not foreground at start")
+            state["status"]="running"
+            save()
             for index,step in enumerate(steps):
                 if marker.exists():
-                    return {"run_id":run_id,"stopped":True,"completed":len(results),"steps":results}
+                    state["status"]="stopped"
+                    break
                 if time.monotonic()-started>20:
                     raise TimeoutError("visual sequence exceeded 20 seconds")
-                if not isinstance(step,dict):
-                    raise ValueError("each step must be an object")
-                action=str(step.get("operation") or "")
-                if action not in ("mouse_action","keyboard_action"):
-                    raise ValueError("only mouse_action and keyboard_action allowed")
+                guard_window()
+                action=step["operation"]
                 command={k:v for k,v in step.items() if k not in ("confirm","target_hwnd")}
                 command.update({"operation":action,"confirm":True,"target_hwnd":hwnd})
                 result=execute(command)
-                results.append({"index":index,"operation":action,"performed":result.get("performed"),
-                                "key":result.get("key"),"characters":result.get("characters")})
+                state["completed"]+=1
+                item={"index":index,"operation":action,"performed":result.get("performed"),
+                      "key":result.get("key"),"characters":result.get("characters")}
+                state["steps"].append(item)
+                save()
+                # Observe each action, but never return all images through transport.
+                guard_window()
+                capture=execute({"operation":"screen_capture","target_hwnd":hwnd,
+                                 "max_width":int(c.get("max_width") or 960),
+                                 "inline_preview":False})
+                item["capture"]={"path":capture["path"],"sha256":capture["sha256"],
+                                 "width":capture["width"],"height":capture["height"]}
+                save()
                 if index<len(steps)-1:
                     time.sleep(0.08)
-            if marker.exists():
-                return {"run_id":run_id,"stopped":True,"completed":len(results),"steps":results}
-            preview=execute({"operation":"screen_capture","target_hwnd":hwnd,
-                             "inline_preview":bool(c.get("inline_preview")),
-                             "max_width":int(c.get("max_width") or 960)})
-            return {"run_id":run_id,"stopped":False,"completed":len(results),
-                    "steps":results,"capture":preview}
+            if state["status"]=="running":
+                state["status"]="stopped" if marker.exists() else "completed"
+            state["finished_at"]=time.time()
+            save()
+            result={"run_id":run_id,"status":state["status"],"stopped":state["status"]=="stopped",
+                    "completed":state["completed"],"steps":state["steps"]}
+            if bool(c.get("inline_preview")) and state["status"]=="completed":
+                guard_window()
+                result["capture"]=execute({"operation":"screen_capture","target_hwnd":hwnd,
+                                           "inline_preview":True,
+                                           "max_width":int(c.get("max_width") or 960)})
+            return result
+        except Exception as exc:
+            state["status"]="failed"
+            state["error"]=f"{type(exc).__name__}: {exc}"
+            state["finished_at"]=time.time()
+            save()
+            raise
         finally:
             marker.unlink(missing_ok=True)
+            VISUAL_SEQUENCE_LOCK.release()
     if op in ("cursor_status","mouse_action","keyboard_action"):
         import ctypes
         from ctypes import wintypes
