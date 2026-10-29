@@ -1171,7 +1171,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for y in range(0,small.height-needle.height+1):
             for x in range(0,small.width-needle.width+1):
                 diff=ImageChops.difference(needle,small.crop((x,y,x+needle.width,y+needle.height)))
-                score=sum(ImageStat.Stat(diff).mean)/(3*255)
+                score=sum(diff.resize((1,1),Image.Resampling.BOX).getpixel((0,0)))/(3*255)
                 if len(best)<4 or score<best[-1][0]:
                     best.append((score,x*scale,y*scale))
                     best.sort()
@@ -1181,7 +1181,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
             for y in range(max(0,cy-9),min(area.height-patch.height,cy+9)+1):
                 for x in range(max(0,cx-9),min(area.width-patch.width,cx+9)+1):
                     diff=ImageChops.difference(patch,area.crop((x,y,x+patch.width,y+patch.height)))
-                    score=sum(ImageStat.Stat(diff).mean)/(3*255)
+                    score=sum(diff.resize((1,1),Image.Resampling.BOX).getpixel((0,0)))/(3*255)
                     if score<final[0]:
                         final=(score,x,y)
         if final[1] is None:
@@ -1199,7 +1199,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                 if abs(xx-final[1])<patch.width and abs(yy-final[2])<patch.height:
                     continue
                 diff=ImageChops.difference(needle,small.crop((x,y,x+needle.width,y+needle.height)))
-                if sum(ImageStat.Stat(diff).mean)/(3*255)<=max(0.12,threshold*4):
+                if sum(diff.resize((1,1),Image.Resampling.BOX).getpixel((0,0)))/(3*255)<=max(0.12,threshold*4):
                     for yy in range(max(0,yy-8),min(area.height-patch.height,yy+8)+1):
                         if second: break
                         for xx2 in range(max(0,xx-8),min(area.width-patch.width,xx+8)+1):
@@ -1210,7 +1210,11 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                                 second=True
                                 break
                     if second: break
-        return {"found":final[0]<=threshold,"ambiguous":second,"difference":round(final[0],6),
+        # The fast BOX score is only for ranking. Final acceptance uses
+        # exact full-resolution channel means, avoiding rounding-based clicks.
+        exact=ImageChops.difference(patch,area.crop((final[1],final[2],final[1]+patch.width,final[2]+patch.height)))
+        exact_score=sum(ImageStat.Stat(exact).mean)/(3*255)
+        return {"found":exact_score<=threshold,"ambiguous":second,"difference":round(exact_score,6),
                 "max_difference":threshold,"bounds":[left+final[1],top+final[2],
                 left+final[1]+patch.width,top+final[2]+patch.height],
                 "center":[left+final[1]+patch.width//2,top+final[2]+patch.height//2],
