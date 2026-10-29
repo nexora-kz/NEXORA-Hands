@@ -159,6 +159,7 @@ SUPPORTED_OPERATIONS={
     "ui_elements":"Enumerate native Windows child controls for the foreground window (read only)",
     "ui_accessibility":"Read foreground Windows UI Automation control metadata (read only)",
     "ui_click":"Click one uniquely named UI Automation button in foreground window",
+    "visual_template_find":"Find a saved screenshot patch in the foreground window (read only)",
     "screen_capture":"Capture current desktop to a bounded local PNG (read only)",
     "cursor_status":"Read cursor position and foreground window (read only)",
     "visual_sequence":"Run a short guarded sequence of desktop input with foreground checks",
@@ -1046,6 +1047,86 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
+    if op=="visual_template_find":
+        from PIL import Image,ImageGrab,ImageChops,ImageStat
+        import ctypes
+        from ctypes import wintypes
+        hwnd=int(c.get("target_hwnd") or 0)
+        u=ctypes.WinDLL("user32",use_last_error=True)
+        u.GetForegroundWindow.restype=wintypes.HWND
+        if hwnd<=0 or int(u.GetForegroundWindow() or 0)!=hwnd:
+            raise PermissionError("target window must be foreground")
+        class RECT(ctypes.Structure):
+            _fields_=[("left",wintypes.LONG),("top",wintypes.LONG),
+                      ("right",wintypes.LONG),("bottom",wintypes.LONG)]
+        rect=RECT()
+        if not u.GetWindowRect(wintypes.HWND(hwnd),ctypes.byref(rect)):
+            raise ValueError("invalid target window")
+        # Only read images previously captured by Hands, never arbitrary paths.
+        raw=str(c.get("reference_path") or "")
+        reference=Path(raw).resolve()
+        screenshots=(DATA/"screenshots").resolve()
+        if reference.parent!=screenshots or not re.fullmatch(r"screen_[0-9]+_[a-f0-9]{8}\.png",reference.name):
+            raise PermissionError("reference must be a Hands screenshot")
+        if not reference.is_file():
+            raise FileNotFoundError("reference screenshot not found")
+        box=c.get("template_box")
+        if not isinstance(box,list) or len(box)!=4 or not all(type(x) is int for x in box):
+            raise ValueError("template_box must be four integer coordinates")
+        with Image.open(reference) as im:
+            im=im.convert("RGB")
+            x1,y1,x2,y2=box
+            if not (0<=x1<x2<=im.width and 0<=y1<y2<=im.height):
+                raise ValueError("template_box outside reference image")
+            if not (12<=x2-x1<=120 and 12<=y2-y1<=100):
+                raise ValueError("template size must be 12..120 by 12..100")
+            patch=im.crop((x1,y1,x2,y2))
+        desktop=ImageGrab.grab()
+        left=max(0,rect.left);top=max(0,rect.top)
+        right=min(desktop.width,rect.right);bottom=min(desktop.height,rect.bottom)
+        if right-left<patch.width or bottom-top<patch.height:
+            raise ValueError("target window smaller than template")
+        # Bound scan cost; allow caller to restrict a known region of the window.
+        region=c.get("search_box")
+        if region is not None:
+            if not isinstance(region,list) or len(region)!=4 or not all(type(x) is int for x in region):
+                raise ValueError("search_box must be four integer coordinates")
+            left=max(left,region[0]);top=max(top,region[1])
+            right=min(right,region[2]);bottom=min(bottom,region[3])
+        if right-left>800 or bottom-top>600 or right-left<patch.width or bottom-top<patch.height:
+            raise ValueError("search area must fit within 800x600 and contain template")
+        area=desktop.crop((left,top,right,bottom)).convert("RGB")
+        # Grayscale 1/4-size candidate scan, then refine around best candidates.
+        scale=4
+        small=area.resize((max(1,area.width//scale),max(1,area.height//scale)))
+        needle=patch.resize((max(1,patch.width//scale),max(1,patch.height//scale)))
+        best=[]
+        for y in range(0,small.height-needle.height+1):
+            for x in range(0,small.width-needle.width+1):
+                diff=ImageChops.difference(needle,small.crop((x,y,x+needle.width,y+needle.height)))
+                score=sum(ImageStat.Stat(diff).mean)/(3*255)
+                if len(best)<4 or score<best[-1][0]:
+                    best.append((score,x*scale,y*scale))
+                    best.sort()
+                    best=best[:4]
+        final=(1.0,None,None)
+        for _,cx,cy in best:
+            for y in range(max(0,cy-5),min(area.height-patch.height,cy+5)+1):
+                for x in range(max(0,cx-5),min(area.width-patch.width,cx+5)+1):
+                    diff=ImageChops.difference(patch,area.crop((x,y,x+patch.width,y+patch.height)))
+                    score=sum(ImageStat.Stat(diff).mean)/(3*255)
+                    if score<final[0]:
+                        final=(score,x,y)
+        if final[1] is None:
+            raise RuntimeError("template search failed")
+        threshold=float(c.get("max_difference",0.08))
+        if not 0<=threshold<=0.3:
+            raise ValueError("max_difference must be between 0 and 0.3")
+        return {"found":final[0]<=threshold,"difference":round(final[0],6),
+                "max_difference":threshold,"bounds":[left+final[1],top+final[2],
+                left+final[1]+patch.width,top+final[2]+patch.height],
+                "center":[left+final[1]+patch.width//2,top+final[2]+patch.height//2],
+                "target_hwnd":hwnd,"read_only":True}
     if op=="ui_click":
         if c.get("confirm") is not True:
             raise PermissionError("confirm=true required")
