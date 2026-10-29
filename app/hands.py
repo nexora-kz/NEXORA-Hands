@@ -340,9 +340,8 @@ def console(text):
     message=sanitize_transport_value(str(text))
     import re
     message=re.sub(r'(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}',r'\1[СКРЫТО]',message)
-    if 'timed out after ' in message and ('-EncodedCommand' in message or 'Command ' in message):
-        match=re.search(r'timed out after (\d+(?:\.\d+)?) seconds',message)
-        message='[ТАЙМ-АУТ] Команда превысила лимит '+(match.group(1)+' сек' if match else 'времени')
+    # Do not infer a timeout from arbitrary command output: source code and logs
+    # may legitimately contain the words 'timed out after'.
     if len(message)>700:
         message=message[:700]+'... [СОКРАЩЕНО]'
     stamp=datetime.now().strftime('%d.%m.%Y %H:%M:%S')
@@ -350,14 +349,14 @@ def console(text):
         line=line.strip()
         if not line: continue
         label=line.upper()
-        if '[ТАЙМ-АУТ]' in label: icon='⌛️'
-        elif '[ОШИБКА' in label or '[ERROR' in label: icon='❌'
-        elif '[ОЖИДАНИЕ' in label: icon='⏳'
-        elif '[ВРЕМЯ' in label: icon='⏱️'
-        elif '[РЕЗУЛЬТАТ' in label: icon='📋'
-        elif '[ВНИМАНИЕ' in label or '[WARNING' in label: icon='⚠️'
-        elif '[ГОТОВО' in label or '[RECOVERY]' in label: icon='✅'
-        elif '[ВЫПОЛНЯЕТСЯ' in label or '[ЗАДАЧА' in label or '[КОМАНДА' in label or '[ПАКЕТ' in label: icon='⚙️'
+        if label.startswith('[ТАЙМ-АУТ]'): icon='⌛️'
+        elif label.startswith(('[ОШИБКА','[ERROR')): icon='❌'
+        elif label.startswith('[ОЖИДАНИЕ'): icon='⏳'
+        elif label.startswith('[ВРЕМЯ'): icon='⏱️'
+        elif label.startswith('[РЕЗУЛЬТАТ'): icon='📋'
+        elif label.startswith(('[ВНИМАНИЕ','[WARNING')): icon='⚠️'
+        elif label.startswith(('[ГОТОВО','[RECOVERY]')): icon='✅'
+        elif label.startswith(('[ВЫПОЛНЯЕТСЯ','[ЗАДАЧА','[КОМАНДА','[ПАКЕТ')): icon='⚙️'
         elif any(x in label for x in ('[СОСТОЯНИЕ','[СВЯЗЬ','[ИСПОЛНИТЕЛЬ','[ОЧЕРЕДЬ','[АКТИВНЫЕ ЗАДАЧИ')): icon='🛠️'
         else: icon='🔧'
         line=re.sub(r'^(?:⏳|⌛️|⏱️|⚙️|📋|⚠️|❌|✅|🔧|🛠️)\s*','',line)
@@ -375,7 +374,8 @@ def safe_command_preview(value):
     for pattern in patterns:
         text=re.sub(pattern,lambda m: m.group(1)+m.group(2)+"[REDACTED]",text)
     text=re.sub(r'(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}',r'\1[СКРЫТО]',text)
-    return text if len(text)<=500 else text[:500]+"... [TRUNCATED]"
+    text=' '.join(text.split())
+    return text if len(text)<=120 else text[:120]+"... [КОМАНДА СОКРАЩЕНА]"
 def _human_age(value):
     try:
         seconds=max(0.0,float(value))
