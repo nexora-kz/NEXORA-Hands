@@ -341,15 +341,16 @@ def console(text):
     message=sanitize_transport_value(str(text))
     import re
     message=re.sub(r'(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}',r'\1[СКРЫТО]',message)
+    # Python subprocess exceptions format argv as quoted list elements.
+    message=re.sub(r"(?i)(['\"]-EncodedCommand['\"]\s*,\s*['\"])[A-Za-z0-9+/=]{32,}(['\"])",r'\1[СКРЫТО]\2',message)
     # Do not infer a timeout from arbitrary command output: source code and logs
     # may legitimately contain the words 'timed out after'.
-    if len(message)>700:
-        message=message[:700]+'... [СОКРАЩЕНО]'
     stamp=datetime.now().strftime('%d.%m.%Y %H:%M:%S')
     for line in message.splitlines() or ['']:
-        line=line.strip()
-        if not line: continue
-        label=line.upper()
+        if not line.strip():
+            print('',flush=True)
+            continue
+        label=line.lstrip().upper()
         if label.startswith('[ТАЙМ-АУТ]'): icon='⌛️'
         elif label.startswith(('[ОШИБКА','[ERROR')): icon='❌'
         elif label.startswith('[ОЖИДАНИЕ'): icon='⏳'
@@ -376,7 +377,7 @@ def safe_command_preview(value):
         text=re.sub(pattern,lambda m: m.group(1)+m.group(2)+"[REDACTED]",text)
     text=re.sub(r'(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}',r'\1[СКРЫТО]',text)
     text=' '.join(text.split())
-    return text if len(text)<=120 else text[:120]+"... [КОМАНДА СОКРАЩЕНА]"
+    return text
 def _human_age(value):
     try:
         seconds=max(0.0,float(value))
@@ -509,7 +510,7 @@ def console_task_result(payload,op):
     if op=="shell":
         out=str(payload.get("stdout") or "").strip()
         if out:
-            console("[Результат] "+out[:4000])
+            console("[Результат] "+out)
     elif op=="health":
         ready='ГОТОВ' if payload.get('ready') else 'ТРЕБУЕТ ВНИМАНИЯ'
         link='подключена' if payload.get('transport_online') else 'нет связи'
@@ -1101,8 +1102,11 @@ def process_running(running):
                 _update_metrics(last_completed_at=completed,failed_count=int(metrics.get("failed_count") or 0)+1)
                 err=str(payload.get("stderr") or "").strip()
                 out=str(payload.get("stdout") or "").strip()
-                detail=err or out or f"Код возврата: {rc}"
-                console((f"[ОШИБКА {task}] " if diagnostic_mode() else "[ОШИБКА] ")+detail[:4000])
+                console(f'[ОШИБКА] Код завершения: {rc}')
+                if out:
+                    console('[РЕЗУЛЬТАТ] '+out)
+                if err:
+                    console('[ОШИБКА] '+err)
                 console(f'[ВРЕМЯ] ⏱️ {completed-started:.1f} сек; задача {task}')
             else:
                 result={"task_id":task,"status":"completed","stage":"completed","payload":payload,
@@ -1114,7 +1118,7 @@ def process_running(running):
                 if diagnostic_mode():
                     console(f"[ГОТОВО {task}] Выполнено успешно")
                     if out and str(out).strip():
-                        console(f"[РЕЗУЛЬТАТ {task}] "+str(out).strip()[:4000])
+                        console(f"[РЕЗУЛЬТАТ {task}] "+str(out).strip())
                 else:
                     console_task_result(payload,op)
                     if op!="health":
@@ -1127,7 +1131,14 @@ def process_running(running):
                               "duration_ms":int((completed-started)*1000)}}
             metrics=_metrics_snapshot()
             _update_metrics(last_completed_at=completed,failed_count=int(metrics.get("failed_count") or 0)+1)
-            console((f"[ОШИБКА {task}] " if diagnostic_mode() else "[ОШИБКА] ")+str(e))
+            if isinstance(e,subprocess.TimeoutExpired):
+                console(f'[ТАЙМ-АУТ] Команда превысила {e.timeout} сек; дочерний процесс остановлен')
+                for label,data in (('[РЕЗУЛЬТАТ]',e.output),('[ОШИБКА]',e.stderr)):
+                    if data:
+                        value=data.decode('utf-8','replace') if isinstance(data,bytes) else str(data)
+                        console(label+' '+normalize_powershell_stream(value))
+            else:
+                console(f'[ОШИБКА] {type(e).__name__}: {e}')
             console(f'[ВРЕМЯ] ⏱️ {completed-started:.1f} сек; задача {task}')
     except Exception as e:
         completed=time.time()
