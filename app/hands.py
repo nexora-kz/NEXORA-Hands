@@ -1213,8 +1213,14 @@ while($queue.Count -gt 0 -and $result.Count -lt __LIMIT__){
                     raise ValueError("change_threshold must be between 0 and 1")
         # Validate all steps before the first input event.
         for step in steps:
-            if not isinstance(step,dict) or step.get("operation") not in ("mouse_action","keyboard_action"):
-                raise ValueError("only mouse_action and keyboard_action allowed")
+            if not isinstance(step,dict) or step.get("operation") not in ("mouse_action","keyboard_action","ui_click"):
+                raise ValueError("only mouse_action, keyboard_action and ui_click allowed")
+            if step["operation"]=="ui_click" and (not isinstance(step.get("label"),str) or not 0<len(step["label"])<=120):
+                raise ValueError("ui_click requires exact button label")
+            if "expect_element" in step and (not isinstance(step["expect_element"],str) or not 0<len(step["expect_element"])<=120):
+                raise ValueError("expect_element must be an exact accessibility name")
+            if "expect_element_present" in step and (type(step["expect_element_present"]) is not bool or "expect_element" not in step):
+                raise ValueError("expect_element_present requires expect_element and a boolean")
             if step["operation"]=="mouse_action" and step.get("action") not in ("move","click","scroll"):
                 raise ValueError("unsupported mouse action")
             if step["operation"]=="keyboard_action" and step.get("action") not in ("text","key"):
@@ -1270,12 +1276,15 @@ while($queue.Count -gt 0 -and $result.Count -lt __LIMIT__){
                     before=desktop.crop(box).convert("RGB")
                     before.thumbnail((640,360))
                 action=step["operation"]
-                command={k:v for k,v in step.items() if k not in ("confirm","target_hwnd","expect_change","change_threshold")}
+                command={k:v for k,v in step.items() if k not in ("confirm","target_hwnd","expect_change","change_threshold","expect_element","expect_element_present")}
                 command.update({"operation":action,"confirm":True,"target_hwnd":hwnd})
                 result=execute(command)
                 state["completed"]+=1
                 item={"index":index,"operation":action,"performed":result.get("performed"),
                       "key":result.get("key"),"characters":result.get("characters")}
+                if action=="ui_click":
+                    item["label"]=result.get("label")
+                    item["center"]=result.get("center")
                 state["steps"].append(item)
                 save()
                 # Observe each action, but never return all images through transport.
@@ -1285,6 +1294,17 @@ while($queue.Count -gt 0 -and $result.Count -lt __LIMIT__){
                                  "inline_preview":False})
                 item["capture"]={"path":capture["path"],"sha256":capture["sha256"],
                                  "width":capture["width"],"height":capture["height"]}
+                if "expect_element" in step:
+                    listing=execute({"operation":"ui_accessibility","target_hwnd":hwnd,"limit":100})
+                    expected_name=step["expect_element"]
+                    expected_present=step.get("expect_element_present",True)
+                    observed=any(e.get("name")==expected_name for e in listing["elements"])
+                    passed=(observed==expected_present)
+                    item["element_check"]={"name":expected_name,"expected_present":expected_present,
+                                           "observed_present":observed,"passed":passed}
+                    save()
+                    if not passed:
+                        raise RuntimeError("accessibility element check failed at step "+str(index))
                 if before is not None:
                     after=ImageGrab.grab().crop(box).convert("RGB")
                     after=after.resize(before.size)
