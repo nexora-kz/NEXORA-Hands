@@ -155,6 +155,7 @@ def diagnostic_mode():
 SUPPORTED_OPERATIONS={
     "shell":"PowerShell command",
     "window_list":"List visible top-level application windows (read only)",
+    "screen_capture":"Capture current desktop to a bounded local PNG (read only)",
     "batch":"Execute up to 5 Hands operations concurrently",
     "read_file":"Read a UTF-8 text file",
     "write_file":"Write a UTF-8 text file",
@@ -1035,6 +1036,22 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
+    if op=="screen_capture":
+        from PIL import ImageGrab
+        width_limit=max(320,min(1920,int(c.get("max_width") or 1280)))
+        image=ImageGrab.grab(all_screens=False)
+        if image.width<=0 or image.height<=0:
+            raise RuntimeError("No interactive desktop available")
+        if image.width>width_limit:
+            height=max(1,round(image.height*width_limit/image.width))
+            image=image.resize((width_limit,height))
+        folder=DATA/"screenshots"
+        folder.mkdir(parents=True,exist_ok=True)
+        file=folder/(f"screen_{int(time.time())}_{uuid.uuid4().hex[:8]}.png")
+        image.save(file,format="PNG",optimize=True)
+        return {"path":str(file),"width":image.width,"height":image.height,
+                "bytes":file.stat().st_size,"sha256":hashlib.sha256(file.read_bytes()).hexdigest(),
+                "read_only":True,"image_included":False}
     if op=="window_list":
         ps="$ErrorActionPreference='Stop'; Get-Process | Where-Object {$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle} | Select-Object Id,ProcessName,MainWindowTitle | ConvertTo-Json -Compress -Depth 3"
         r=subprocess.run(powershell_args(ps),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=20)
