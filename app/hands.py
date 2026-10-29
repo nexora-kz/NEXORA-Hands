@@ -1132,9 +1132,10 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                     from PIL import ImageGrab,ImageChops,ImageStat
                     # Primary desktop coordinates; compare a stable window rectangle.
                     bounds=guard_window()["bounds"]
+                    desktop=ImageGrab.grab()
                     box=(max(0,bounds[0]),max(0,bounds[1]),
-                         min(ImageGrab.grab().width,bounds[2]),
-                         min(ImageGrab.grab().height,bounds[3]))
+                         min(desktop.width,bounds[2]),
+                         min(desktop.height,bounds[3]))
                     if box[2]<=box[0] or box[3]<=box[1]:
                         raise ValueError("target window outside primary screen")
                     before=desktop.crop(box).convert("RGB")
