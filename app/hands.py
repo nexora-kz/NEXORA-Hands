@@ -1116,9 +1116,44 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
     if op=="screen_capture":
         from PIL import ImageGrab
         width_limit=max(320,min(1920,int(c.get("max_width") or 1280)))
+        # Coordinates refer to the primary desktop, not to resized preview pixels.
         image=ImageGrab.grab(all_screens=False)
         if image.width<=0 or image.height<=0:
             raise RuntimeError("No interactive desktop available")
+        original_size=[image.width,image.height]
+        region=c.get("region")
+        target_hwnd=c.get("target_hwnd")
+        if region is not None and target_hwnd is not None:
+            raise ValueError("region and target_hwnd are mutually exclusive")
+        if target_hwnd is not None:
+            import ctypes
+            from ctypes import wintypes
+            user32=ctypes.WinDLL("user32",use_last_error=True)
+            class RECT(ctypes.Structure):
+                _fields_=[("left",wintypes.LONG),("top",wintypes.LONG),
+                          ("right",wintypes.LONG),("bottom",wintypes.LONG)]
+            user32.IsWindow.argtypes=[wintypes.HWND]
+            user32.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(RECT)]
+            hwnd=int(target_hwnd)
+            if not hwnd or not user32.IsWindow(hwnd):
+                raise ValueError("invalid target window handle")
+            rect=RECT()
+            if not user32.GetWindowRect(hwnd,ctypes.byref(rect)):
+                raise OSError("GetWindowRect failed")
+            region=[rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top]
+        crop_box=None
+        if region is not None:
+            if not isinstance(region,(list,tuple)) or len(region)!=4:
+                raise ValueError("region must be [x,y,width,height]")
+            x,y,width,height=[int(v) for v in region]
+            if width<=0 or height<=0 or width*height>12000000:
+                raise ValueError("invalid or oversized region")
+            left=max(0,x);top=max(0,y)
+            right=min(image.width,x+width);bottom=min(image.height,y+height)
+            if right<=left or bottom<=top:
+                raise ValueError("region outside primary desktop")
+            crop_box=[left,top,right,bottom]
+            image=image.crop(tuple(crop_box))
         if image.width>width_limit:
             height=max(1,round(image.height*width_limit/image.width))
             image=image.resize((width_limit,height))
@@ -1127,6 +1162,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         file=folder/(f"screen_{int(time.time())}_{uuid.uuid4().hex[:8]}.png")
         image.save(file,format="PNG",optimize=True)
         result={"path":str(file),"width":image.width,"height":image.height,
+                "source_size":original_size,"crop_box":crop_box,
                 "bytes":file.stat().st_size,"sha256":hashlib.sha256(file.read_bytes()).hexdigest(),
                 "read_only":True,"image_included":False}
         if bool(c.get("inline_preview")):
