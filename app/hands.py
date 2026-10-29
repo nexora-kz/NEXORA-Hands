@@ -157,6 +157,8 @@ SUPPORTED_OPERATIONS={
     "window_list":"List visible top-level application windows (read only)",
     "screen_capture":"Capture current desktop to a bounded local PNG (read only)",
     "cursor_status":"Read cursor position and foreground window (read only)",
+    "visual_sequence":"Run a short guarded sequence of desktop input with foreground checks",
+    "visual_stop":"Request cancellation of a visual sequence by its run_id",
     "mouse_action":"Guarded mouse move/click/scroll on an explicitly targeted foreground window",
     "keyboard_action":"Guarded text or allowlisted key input on an explicitly targeted foreground window",
     "batch":"Execute up to 5 Hands operations concurrently",
@@ -1039,6 +1041,59 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
+    if op=="visual_stop":
+        run_id=str(c.get("run_id") or "")
+        if not re.fullmatch(r"[a-f0-9]{32}",run_id):
+            raise ValueError("valid run_id required")
+        folder=DATA/"visual_runs"
+        folder.mkdir(parents=True,exist_ok=True)
+        (folder/(run_id+".stop")).write_text("stop",encoding="ascii")
+        return {"run_id":run_id,"stop_requested":True}
+    if op=="visual_sequence":
+        if c.get("confirm") is not True:
+            raise PermissionError("confirm=true required")
+        steps=c.get("steps")
+        if not isinstance(steps,list) or not 1<=len(steps)<=8:
+            raise ValueError("steps must contain 1..8 items")
+        hwnd=int(c.get("target_hwnd") or 0)
+        if hwnd<=0:
+            raise ValueError("target_hwnd required")
+        run_id=str(c.get("run_id") or uuid.uuid4().hex)
+        if not re.fullmatch(r"[a-f0-9]{32}",run_id):
+            raise ValueError("run_id must be 32 lowercase hex characters")
+        folder=DATA/"visual_runs"
+        folder.mkdir(parents=True,exist_ok=True)
+        marker=folder/(run_id+".stop")
+        started=time.monotonic()
+        results=[]
+        # Every step delegates to the same guarded operations; no arbitrary shell.
+        try:
+            for index,step in enumerate(steps):
+                if marker.exists():
+                    return {"run_id":run_id,"stopped":True,"completed":len(results),"steps":results}
+                if time.monotonic()-started>20:
+                    raise TimeoutError("visual sequence exceeded 20 seconds")
+                if not isinstance(step,dict):
+                    raise ValueError("each step must be an object")
+                action=str(step.get("operation") or "")
+                if action not in ("mouse_action","keyboard_action"):
+                    raise ValueError("only mouse_action and keyboard_action allowed")
+                command={k:v for k,v in step.items() if k not in ("confirm","target_hwnd")}
+                command.update({"operation":action,"confirm":True,"target_hwnd":hwnd})
+                result=execute(command)
+                results.append({"index":index,"operation":action,"performed":result.get("performed"),
+                                "key":result.get("key"),"characters":result.get("characters")})
+                if index<len(steps)-1:
+                    time.sleep(0.08)
+            if marker.exists():
+                return {"run_id":run_id,"stopped":True,"completed":len(results),"steps":results}
+            preview=execute({"operation":"screen_capture","target_hwnd":hwnd,
+                             "inline_preview":bool(c.get("inline_preview")),
+                             "max_width":int(c.get("max_width") or 960)})
+            return {"run_id":run_id,"stopped":False,"completed":len(results),
+                    "steps":results,"capture":preview}
+        finally:
+            marker.unlink(missing_ok=True)
     if op in ("cursor_status","mouse_action","keyboard_action"):
         import ctypes
         from ctypes import wintypes
