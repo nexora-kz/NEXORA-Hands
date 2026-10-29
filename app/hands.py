@@ -156,6 +156,9 @@ SUPPORTED_OPERATIONS={
     "shell":"PowerShell command",
     "window_list":"List visible top-level application windows (read only)",
     "screen_capture":"Capture current desktop to a bounded local PNG (read only)",
+    "cursor_status":"Read cursor position and foreground window (read only)",
+    "mouse_action":"Guarded mouse move/click/scroll on an explicitly targeted foreground window",
+    "keyboard_action":"Guarded text or allowlisted key input on an explicitly targeted foreground window",
     "batch":"Execute up to 5 Hands operations concurrently",
     "read_file":"Read a UTF-8 text file",
     "write_file":"Write a UTF-8 text file",
@@ -1036,6 +1039,80 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
+    if op in ("cursor_status","mouse_action","keyboard_action"):
+        import ctypes
+        from ctypes import wintypes
+        user32=ctypes.WinDLL("user32",use_last_error=True)
+        class POINT(ctypes.Structure):
+            _fields_=[("x",wintypes.LONG),("y",wintypes.LONG)]
+        class RECT(ctypes.Structure):
+            _fields_=[("left",wintypes.LONG),("top",wintypes.LONG),("right",wintypes.LONG),("bottom",wintypes.LONG)]
+        user32.GetForegroundWindow.restype=wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+        user32.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(RECT)]
+        user32.GetCursorPos.argtypes=[ctypes.POINTER(POINT)]
+        hwnd=user32.GetForegroundWindow()
+        pid=wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+        title=ctypes.create_unicode_buffer(512)
+        user32.GetWindowTextW(hwnd,title,512)
+        rect=RECT()
+        user32.GetWindowRect(hwnd,ctypes.byref(rect))
+        point=POINT()
+        user32.GetCursorPos(ctypes.byref(point))
+        foreground={"hwnd":int(hwnd or 0),"pid":pid.value,"title":title.value,
+                    "bounds":[rect.left,rect.top,rect.right,rect.bottom]}
+        if op=="cursor_status":
+            return {"cursor":{"x":point.x,"y":point.y},"foreground":foreground,"read_only":True}
+        # Both explicit consent and exact foreground HWND are required for every action.
+        if c.get("confirm") is not True:
+            raise PermissionError("confirm=true required for desktop input")
+        if int(c.get("target_hwnd") or 0)!=int(hwnd or 0) or not hwnd:
+            raise PermissionError("foreground window changed or target_hwnd missing")
+        if not title.value:
+            raise PermissionError("untitled foreground window not allowed")
+        if op=="mouse_action":
+            action=str(c.get("action") or "").lower()
+            if action not in ("move","click","scroll"):
+                raise ValueError("mouse action must be move, click or scroll")
+            if action in ("move","click"):
+                x=int(c["x"]); y=int(c["y"])
+                if not (rect.left<=x<rect.right and rect.top<=y<rect.bottom):
+                    raise ValueError("coordinates outside target window")
+                if not user32.SetCursorPos(x,y):
+                    raise OSError("SetCursorPos failed")
+                if action=="click":
+                    user32.mouse_event(0x0002,0,0,0,0)
+                    user32.mouse_event(0x0004,0,0,0,0)
+            else:
+                delta=int(c.get("delta") or 0)
+                if not -1200<=delta<=1200 or delta==0:
+                    raise ValueError("scroll delta must be -1200..1200, nonzero")
+                user32.mouse_event(0x0800,0,0,ctypes.c_ulong(delta).value,0)
+            return {"performed":action,"foreground":foreground,"read_only":False}
+        action=str(c.get("action") or "").lower()
+        if action=="text":
+            value=str(c.get("text") or "")
+            if not value or len(value)>500:
+                raise ValueError("text length must be 1..500")
+            # Unicode key events; no clipboard, shell, shortcuts or passwords.
+            for char in value:
+                code=ord(char)
+                if code>0xFFFF or code in (0,):
+                    raise ValueError("unsupported Unicode character")
+                user32.keybd_event(0,code,0x0004,0)
+                user32.keybd_event(0,code,0x0004|0x0002,0)
+            return {"performed":"text","characters":len(value),"foreground":foreground}
+        if action=="key":
+            keys={"enter":0x0D,"tab":0x09,"escape":0x1B,"backspace":0x08,
+                  "left":0x25,"up":0x26,"right":0x27,"down":0x28}
+            key=str(c.get("key") or "").lower()
+            if key not in keys:
+                raise ValueError("key not in safe allowlist")
+            user32.keybd_event(keys[key],0,0,0)
+            user32.keybd_event(keys[key],0,0x0002,0)
+            return {"performed":"key","key":key,"foreground":foreground}
+        raise ValueError("keyboard action must be text or key")
     if op=="screen_capture":
         from PIL import ImageGrab
         width_limit=max(320,min(1920,int(c.get("max_width") or 1280)))
