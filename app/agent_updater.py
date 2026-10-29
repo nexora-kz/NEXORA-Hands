@@ -15,19 +15,8 @@ def copyset(src,dst):
             d=dst/rel; d.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(s,d)
 def stop(root,own):
     q=str(root).lower().replace("'","''")
-    ps=f"""$all=@(Get-CimInstance Win32_Process); $agents=@($all|Where-Object {{$_.ProcessId -ne {own} -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains('{q}') -and ($_.CommandLine -match 'hands\\.py|supabase_channel\\.py')}}); $hosts=@($all|Where-Object {{$_.Name -match '^(powershell|pwsh)\\.exe$' -and $_.CommandLine -and ($_.CommandLine -match 'NEXORA-Hands-remote\\.ps1' -or ($_.CommandLine.ToLowerInvariant().Contains('{q}') -and $_.CommandLine -match 'start\\.ps1'))}}); @($agents)+@($hosts)|Where-Object {{$_ -and $_.ProcessId -ne {own}}}|Sort-Object ProcessId -Unique|ForEach-Object {{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}}"""
+    ps=f"""$all=@(Get-CimInstance Win32_Process); $agents=@($all|Where-Object {{$_.ProcessId -ne {own} -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains('{q}') -and ($_.CommandLine -match 'hands\\.py|supabase_channel\\.py')}}); $agents|Sort-Object ProcessId -Unique|ForEach-Object {{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}}"""
     subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",ps],capture_output=True); time.sleep(2)
-def launch(root):
-    # Preserve a visible user console after the updater restarts the agent.
-    flags=getattr(subprocess,"CREATE_NEW_CONSOLE",0)
-    subprocess.Popen(["powershell.exe","-NoProfile","-ExecutionPolicy","RemoteSigned","-File",str(root/"start.ps1"),"-PythonPath",sys.executable],cwd=str(root),stdin=subprocess.DEVNULL,creationflags=flags)
-def launch_status_window(root):
-    """Restore a visible user-facing status window after the old host closes."""
-    flags=getattr(subprocess,"CREATE_NEW_CONSOLE",0)
-    subprocess.Popen(["powershell.exe","-NoProfile","-ExecutionPolicy","RemoteSigned",
-                      "-File",str(root/"start.ps1"),"-StatusWindow"],
-                     cwd=str(root),stdin=subprocess.DEVNULL,creationflags=flags)
-
 def healthy(root,after,timeout=90):
     channel_state=root/"data/supabase_channel_state.json"
     executor_state=root/"data/state.json"
@@ -94,16 +83,13 @@ def main():
         hashes={rel:digest(source/rel) for rel in PAYLOAD if (source/rel).exists()}; rep["hashes"]=hashes; save(rp,rep)
         if not a.rollback:
             require_idle(root)
-        stop(root,os.getpid()); runtime_changed=True; copyset(source,root)
+        # Install while idle, preserving the original console and its watchdog.
+        # The watchdog restarts only the Python children after they are stopped.
+        copyset(source,root); runtime_changed=True
         started=time.time()
-        try:(data/"supabase_channel_state.json").unlink(missing_ok=True)
-        except Exception:pass
-        launch(root)
+        stop(root,os.getpid())
         if not healthy(root,started): raise RuntimeError("fresh health timeout")
-        # The old launcher window was terminated during update. Restore a
-        # dedicated visible status console instead of requiring a manual click.
-        launch_status_window(root)
-        rep["status_window_launch_requested"]=True
+        rep["console_preserved"]=True
         save(rp,rep)
         cp=None
         for attempt in range(3):
@@ -121,7 +107,7 @@ def main():
         rep["error"]=f"{type(e).__name__}: {e}"
         if runtime_changed and not a.rollback and previous.is_dir():
             try:
-                stop(root,os.getpid()); copyset(previous,root); started=time.time(); launch(root)
+                copyset(previous,root); started=time.time(); stop(root,os.getpid())
                 rep["rolled_back"]=True; rep["rollback_healthy"]=healthy(root,started)
             except Exception as re: rep["rollback_error"]=str(re)
         rep["completed_at"]=time.time(); save(rp,rep); raise
