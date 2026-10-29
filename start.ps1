@@ -1,4 +1,4 @@
-﻿param([string]$PythonPath = '')
+﻿param([string]$PythonPath = '', [switch]$StatusWindow)
 $ErrorActionPreference = 'Stop'
 $Utf8NoBom = [Text.UTF8Encoding]::new($false)
 try { [Console]::InputEncoding = $Utf8NoBom } catch {}
@@ -42,12 +42,33 @@ $HandsErr = Join-Path $Log 'hands.stderr.log'
 $ChannelOut = Join-Path $Log 'channel.stdout.log'
 $ChannelErr = Join-Path $Log 'channel.stderr.log'
 
+if ($StatusWindow) {
+    try { $Host.UI.RawUI.WindowTitle = 'NEXORA Hands - Состояние' } catch {}
+    Write-Host 'NEXORA Hands: окно состояния (Ctrl+C — закрыть только это окно).'
+    while ($true) {
+        $status = 'ожидание данных'
+        try {
+            $s = Get-Content -LiteralPath $ChannelState -Raw -ErrorAction Stop | ConvertFrom-Json
+            $fresh = $false
+            if ($s.heartbeat_at) { $fresh = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0 - [double]$s.heartbeat_at) -lt 45 }
+            if ($fresh -and $s.heartbeat_ok -and $s.executor_online) { $status = 'ПОДКЛЮЧЁН' }
+            else { $status = 'НЕТ АКТУАЛЬНОГО СОЕДИНЕНИЯ' }
+        } catch { $status = 'ожидание данных' }
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Hands: $status. Закрытие окна не остановит исполнитель."
+        Start-Sleep -Seconds 10
+    }
+}
+
 $HostMutex = New-Object System.Threading.Mutex($false, 'Local\NEXORA.Hands.Host')
 $OwnsHostMutex = $false
 try { $OwnsHostMutex = $HostMutex.WaitOne(0) }
 catch [System.Threading.AbandonedMutexException] { $OwnsHostMutex = $true }
 if (-not $OwnsHostMutex) {
-    Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] ✅ NEXORA Hands уже подключён."
+    $HostMutex.Dispose()
+    $exe = Join-Path $PSHOME 'powershell.exe'
+    $arguments = @('-NoProfile','-ExecutionPolicy','RemoteSigned','-File',('"' + $MyInvocation.MyCommand.Path + '"'),'-StatusWindow')
+    Start-Process -FilePath $exe -ArgumentList $arguments -WindowStyle Normal | Out-Null
+    Write-Host "[$(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')] NEXORA Hands работает. Открыто отдельное окно состояния."
     exit 0
 }
 
