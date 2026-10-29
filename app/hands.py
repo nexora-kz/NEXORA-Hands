@@ -1054,6 +1054,8 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         max_difference=float(c.get("max_difference",0.015))
         if not 0<=max_difference<=0.02:
             raise ValueError("template click max_difference must be 0..0.02")
+        if c.get("template_scale")=="auto":
+            raise ValueError("automatic scale is read-only; click requires explicit scale")
         template_scale=float(c.get("template_scale",1.0))
         if not 0.75<=template_scale<=1.5:
             raise ValueError("template click scale must be 0.75..1.5")
@@ -1075,6 +1077,36 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                 "difference":second["difference"],"verified_twice":True,
                 "target_hwnd":second["target_hwnd"]}
     if op=="visual_template_find":
+        if c.get("template_scale")=="auto":
+            # Bounded read-only search. No clicking is allowed on auto guesses.
+            region=c.get("search_box")
+            if (not isinstance(region,list) or len(region)!=4
+                    or not all(type(v) is int for v in region)
+                    or not 0<region[2]-region[0]<=400
+                    or not 0<region[3]-region[1]<=300):
+                raise ValueError("auto scale requires search_box no larger than 400x300")
+            scales=(1.0,0.9,1.1,0.8,1.25)
+            candidates=[]
+            for scale in scales:
+                request={k:v for k,v in c.items() if k!="operation"}
+                request.update({"operation":"visual_template_find","template_scale":scale})
+                result=execute(request)
+                candidates.append(result)
+            ranked=sorted(candidates,key=lambda x:x["difference"])
+            best=ranked[0]
+            # Different scales can match the same element. Reject only
+            # competing spatially distinct candidates with good scores.
+            competing=any(other["found"] and
+                          (abs(other["center"][0]-best["center"][0])>max(16,(best["bounds"][2]-best["bounds"][0])//2) or
+                           abs(other["center"][1]-best["center"][1])>max(16,(best["bounds"][3]-best["bounds"][1])//2))
+                          for other in ranked[1:])
+            return {**best,"ambiguous":best["ambiguous"] or competing,
+                    "auto_scale":True,"tested_scales":list(scales),
+                    "scale_candidates":[{"scale":x["template_scale"],
+                                         "difference":x["difference"],
+                                         "found":x["found"],"ambiguous":x["ambiguous"]}
+                                        for x in ranked],
+                    "read_only":True}
         from PIL import Image,ImageGrab,ImageChops,ImageStat
         import ctypes
         from ctypes import wintypes
