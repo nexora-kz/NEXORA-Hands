@@ -100,6 +100,8 @@ def normalize_powershell_stream(text):
 
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/"data"; PROCESS_DIR=DATA/"processes"; PROCESS_DIR.mkdir(parents=True,exist_ok=True)
+import threading
+_visual_template_frame=threading.local()
 INBOX,OUTBOX=DATA/"inbox",DATA/"outbox"; STATE=DATA/"state.json"
 RESULTS_DIR=DATA/"results"; RESULTS_DIR.mkdir(parents=True,exist_ok=True)
 for p in (INBOX,OUTBOX): p.mkdir(parents=True,exist_ok=True)
@@ -1085,13 +1087,29 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                     or not 0<region[2]-region[0]<=400
                     or not 0<region[3]-region[1]<=300):
                 raise ValueError("auto scale requires search_box no larger than 400x300")
+            # One immutable screenshot per auto-scale request. Thread-local
+            # state avoids sharing frames between parallel Hands tasks.
+            from PIL import ImageGrab
+            import ctypes,threading
+            from ctypes import wintypes
+            hwnd=int(c.get("target_hwnd") or 0)
+            user32=ctypes.WinDLL("user32",use_last_error=True)
+            user32.GetForegroundWindow.restype=wintypes.HWND
+            if hwnd<=0 or int(user32.GetForegroundWindow() or 0)!=hwnd:
+                raise PermissionError("target window must be foreground")
+            frame=ImageGrab.grab()
             scales=(1.0,0.9,1.1,0.8,1.25)
             candidates=[]
-            for scale in scales:
-                request={k:v for k,v in c.items() if k!="operation"}
-                request.update({"operation":"visual_template_find","template_scale":scale})
-                result=execute(request)
-                candidates.append(result)
+            previous=getattr(_visual_template_frame,"image",None)
+            _visual_template_frame.image=frame
+            try:
+                for scale in scales:
+                    request={k:v for k,v in c.items() if k!="operation"}
+                    request.update({"operation":"visual_template_find","template_scale":scale})
+                    result=execute(request)
+                    candidates.append(result)
+            finally:
+                _visual_template_frame.image=previous
             ranked=sorted(candidates,key=lambda x:x["difference"])
             best=ranked[0]
             # Different scales can match the same element. Reject only
@@ -1148,7 +1166,9 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         if template_scale!=1.0:
             new_size=(round(patch.width*template_scale),round(patch.height*template_scale))
             patch=patch.resize(new_size,Image.Resampling.LANCZOS)
-        desktop=ImageGrab.grab()
+        desktop=getattr(_visual_template_frame,"image",None)
+        if desktop is None:
+            desktop=ImageGrab.grab()
         left=max(0,rect.left);top=max(0,rect.top)
         right=min(desktop.width,rect.right);bottom=min(desktop.height,rect.bottom)
         if right-left<patch.width or bottom-top<patch.height:
