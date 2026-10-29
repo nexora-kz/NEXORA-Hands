@@ -1054,6 +1054,9 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         max_difference=float(c.get("max_difference",0.015))
         if not 0<=max_difference<=0.02:
             raise ValueError("template click max_difference must be 0..0.02")
+        template_scale=float(c.get("template_scale",1.0))
+        if not 0.75<=template_scale<=1.5:
+            raise ValueError("template click scale must be 0.75..1.5")
         args={k:v for k,v in c.items() if k not in ("operation","confirm")}
         args.update({"operation":"visual_template_find","max_difference":max_difference})
         first=execute(args)
@@ -1105,6 +1108,14 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
             if not (12<=x2-x1<=120 and 12<=y2-y1<=100):
                 raise ValueError("template size must be 12..120 by 12..100")
             patch=im.crop((x1,y1,x2,y2))
+        # Explicit scale, never an implicit guess: caller must know the target
+        # display/UI scaling. Avoid unpredictable matches across many scales.
+        template_scale=float(c.get("template_scale",1.0))
+        if not 0.75<=template_scale<=1.5:
+            raise ValueError("template_scale must be 0.75..1.5")
+        if template_scale!=1.0:
+            new_size=(round(patch.width*template_scale),round(patch.height*template_scale))
+            patch=patch.resize(new_size,Image.Resampling.LANCZOS)
         desktop=ImageGrab.grab()
         left=max(0,rect.left);top=max(0,rect.top)
         right=min(desktop.width,rect.right);bottom=min(desktop.height,rect.bottom)
@@ -1171,7 +1182,7 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                 "max_difference":threshold,"bounds":[left+final[1],top+final[2],
                 left+final[1]+patch.width,top+final[2]+patch.height],
                 "center":[left+final[1]+patch.width//2,top+final[2]+patch.height//2],
-                "target_hwnd":hwnd,"read_only":True}
+                "target_hwnd":hwnd,"template_scale":template_scale,"read_only":True}
     if op=="ui_click":
         if c.get("confirm") is not True:
             raise PermissionError("confirm=true required")
