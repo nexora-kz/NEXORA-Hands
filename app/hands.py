@@ -160,6 +160,7 @@ SUPPORTED_OPERATIONS={
     "ui_accessibility":"Read foreground Windows UI Automation control metadata (read only)",
     "ui_click":"Click one uniquely named UI Automation button in foreground window",
     "visual_template_find":"Find a saved screenshot patch in the foreground window (read only)",
+    "visual_template_click":"Click an unambiguous screenshot patch in the foreground window",
     "screen_capture":"Capture current desktop to a bounded local PNG (read only)",
     "cursor_status":"Read cursor position and foreground window (read only)",
     "visual_sequence":"Run a short guarded sequence of desktop input with foreground checks",
@@ -1047,6 +1048,29 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
+    if op=="visual_template_click":
+        if c.get("confirm") is not True:
+            raise PermissionError("confirm=true required")
+        max_difference=float(c.get("max_difference",0.015))
+        if not 0<=max_difference<=0.02:
+            raise ValueError("template click max_difference must be 0..0.02")
+        args={k:v for k,v in c.items() if k not in ("operation","confirm")}
+        args.update({"operation":"visual_template_find","max_difference":max_difference})
+        first=execute(args)
+        if not first["found"] or first["ambiguous"]:
+            raise ValueError("template absent or ambiguous; no click")
+        # Repeat the read-only recognition immediately before the input event.
+        second=execute(args)
+        if (not second["found"] or second["ambiguous"]
+                or second["center"]!=first["center"]):
+            raise RuntimeError("template position changed or is ambiguous; no click")
+        x,y=second["center"]
+        clicked=execute({"operation":"mouse_action","action":"click",
+                         "target_hwnd":int(c.get("target_hwnd") or 0),
+                         "confirm":True,"x":x,"y":y})
+        return {"performed":clicked["performed"],"center":[x,y],
+                "difference":second["difference"],"verified_twice":True,
+                "target_hwnd":second["target_hwnd"]}
     if op=="visual_template_find":
         from PIL import Image,ImageGrab,ImageChops,ImageStat
         import ctypes
@@ -1122,7 +1146,28 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         threshold=float(c.get("max_difference",0.08))
         if not 0<=threshold<=0.3:
             raise ValueError("max_difference must be between 0 and 0.3")
-        return {"found":final[0]<=threshold,"difference":round(final[0],6),
+        # Reject a second visually similar candidate far from the best hit.
+        # Coarse matching is deliberately conservative: ambiguous => no click.
+        second=False
+        for y in range(0,small.height-needle.height+1):
+            if second: break
+            for x in range(0,small.width-needle.width+1):
+                xx,yy=x*scale,y*scale
+                if abs(xx-final[1])<patch.width and abs(yy-final[2])<patch.height:
+                    continue
+                diff=ImageChops.difference(needle,small.crop((x,y,x+needle.width,y+needle.height)))
+                if sum(ImageStat.Stat(diff).mean)/(3*255)<=max(0.12,threshold*4):
+                    for yy in range(max(0,yy-4),min(area.height-patch.height,yy+4)+1):
+                        if second: break
+                        for xx2 in range(max(0,xx-4),min(area.width-patch.width,xx+4)+1):
+                            if abs(xx2-final[1])<patch.width and abs(yy-final[2])<patch.height:
+                                continue
+                            exact=ImageChops.difference(patch,area.crop((xx2,yy,xx2+patch.width,yy+patch.height)))
+                            if sum(ImageStat.Stat(exact).mean)/(3*255)<=threshold:
+                                second=True
+                                break
+                    if second: break
+        return {"found":final[0]<=threshold,"ambiguous":second,"difference":round(final[0],6),
                 "max_difference":threshold,"bounds":[left+final[1],top+final[2],
                 left+final[1]+patch.width,top+final[2]+patch.height],
                 "center":[left+final[1]+patch.width//2,top+final[2]+patch.height//2],
@@ -1294,10 +1339,13 @@ while($queue.Count -gt 0 -and $result.Count -lt __LIMIT__){
                     raise ValueError("change_threshold must be between 0 and 1")
         # Validate all steps before the first input event.
         for step in steps:
-            if not isinstance(step,dict) or step.get("operation") not in ("mouse_action","keyboard_action","ui_click"):
+            if not isinstance(step,dict) or step.get("operation") not in ("mouse_action","keyboard_action","ui_click","visual_template_click"):
                 raise ValueError("only mouse_action, keyboard_action and ui_click allowed")
             if step["operation"]=="ui_click" and (not isinstance(step.get("label"),str) or not 0<len(step["label"])<=120):
                 raise ValueError("ui_click requires exact button label")
+            if step["operation"]=="visual_template_click":
+                if not isinstance(step.get("reference_path"),str) or not isinstance(step.get("template_box"),list):
+                    raise ValueError("visual_template_click requires reference_path and template_box")
             if "expect_element" in step and (not isinstance(step["expect_element"],str) or not 0<len(step["expect_element"])<=120):
                 raise ValueError("expect_element must be an exact accessibility name")
             if "expect_element_present" in step and (type(step["expect_element_present"]) is not bool or "expect_element" not in step):
@@ -1366,6 +1414,10 @@ while($queue.Count -gt 0 -and $result.Count -lt __LIMIT__){
                 if action=="ui_click":
                     item["label"]=result.get("label")
                     item["center"]=result.get("center")
+                if action=="visual_template_click":
+                    item["center"]=result.get("center")
+                    item["difference"]=result.get("difference")
+                    item["verified_twice"]=result.get("verified_twice")
                 state["steps"].append(item)
                 save()
                 # Observe each action, but never return all images through transport.
