@@ -336,13 +336,19 @@ def state(status,task_id="",error="",active_tasks=None,max_parallel=None):
         tmp.unlink(missing_ok=True)
         raise last_error
 OP_RU={"shell":"Команда","batch":"Пакетное выполнение","read_file":"Чтение файла","write_file":"Запись файла","list_directory":"Просмотр папки","read_multiple_files":"Чтение файлов","search_files":"Поиск файлов","start_search":"Поиск","edit_block":"Изменение файла","copy":"Копирование","move":"Перемещение","move_file":"Перемещение","delete":"Удаление","mkdir":"Создание папки","exists":"Проверка пути","stat":"Сведения о файле","read_file_chunk":"Чтение фрагмента файла","get_file_info":"Сведения о файле","process_list":"Список процессов","process_start":"Запуск процесса","process_wait":"Ожидание процесса","session_start":"Запуск сессии","session_read":"Чтение сессии","system_info":"Информация о компьютере","system_resources":"Ресурсы компьютера","health":"Проверка состояния","get_capabilities":"Возможности","local_queue":"Очередь","cleanup_preview":"Предпросмотр очистки"}
+def mask_encoded_payloads(value):
+    """Mask only long encoded arguments in logs and metadata; preserve normal text."""
+    text=str(value or "")
+    text=re.sub(r"(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}",r"\1[СКРЫТО: BASE64]",text)
+    text=re.sub(r"""(?i)(['"]-EncodedCommand['"]\s*,\s*['"])[A-Za-z0-9+/=]{32,}(['"])""",r"\1[СКРЫТО: BASE64]\2",text)
+    text=re.sub(r"""(?i)(\b(?:base64\.)?b64decode\s*\(\s*['"])[A-Za-z0-9+/=]{64,}(['"])""",r"\1[СКРЫТО: BASE64]\2",text)
+    return text
+
 def console(text):
     from datetime import datetime
     message=sanitize_transport_value(str(text))
     import re
-    message=re.sub(r'(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}',r'\1[СКРЫТО]',message)
-    # Python subprocess exceptions format argv as quoted list elements.
-    message=re.sub(r"(?i)(['\"]-EncodedCommand['\"]\s*,\s*['\"])[A-Za-z0-9+/=]{32,}(['\"])",r'\1[СКРЫТО]\2',message)
+    message=mask_encoded_payloads(message)
     # Do not infer a timeout from arbitrary command output: source code and logs
     # may legitimately contain the words 'timed out after'.
     stamp=datetime.now().strftime('%d.%m.%Y %H:%M:%S')
@@ -375,7 +381,7 @@ def safe_command_preview(value):
     ]
     for pattern in patterns:
         text=re.sub(pattern,lambda m: m.group(1)+m.group(2)+"[REDACTED]",text)
-    text=re.sub(r'(?i)(-EncodedCommand\s+)[A-Za-z0-9+/=]{32,}',r'\1[СКРЫТО]',text)
+    text=mask_encoded_payloads(text)
     text=' '.join(text.split())
     return text
 def _human_age(value):
@@ -1126,9 +1132,14 @@ def process_running(running):
                 console(f'[ВРЕМЯ] ⏱️ {completed-started:.1f} сек; задача {task}')
         except Exception as e:
             completed=time.time()
-            result={"task_id":task,"status":"error","stage":"failed","error":f"{type(e).__name__}: {e}",
+            result={"task_id":task,"status":"error","stage":"failed","error":mask_encoded_payloads(f"{type(e).__name__}: {e}"),
                     "timing":{"started_at":started,"completed_at":completed,
                               "duration_ms":int((completed-started)*1000)}}
+            if isinstance(e,subprocess.TimeoutExpired):
+                result["timeout_seconds"]=e.timeout
+                for key,data in (("stdout",e.output),("stderr",e.stderr)):
+                    if data:
+                        result[key]=data.decode("utf-8","replace") if isinstance(data,bytes) else str(data)
             metrics=_metrics_snapshot()
             _update_metrics(last_completed_at=completed,failed_count=int(metrics.get("failed_count") or 0)+1)
             if isinstance(e,subprocess.TimeoutExpired):
