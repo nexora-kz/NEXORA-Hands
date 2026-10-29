@@ -157,6 +157,8 @@ SUPPORTED_OPERATIONS={
     "shell":"PowerShell command",
     "window_list":"List visible top-level application windows (read only)",
     "ui_elements":"Enumerate native Windows child controls for the foreground window (read only)",
+    "ui_accessibility":"Read foreground Windows UI Automation control metadata (read only)",
+    "ui_click":"Click one uniquely named UI Automation button in foreground window",
     "screen_capture":"Capture current desktop to a bounded local PNG (read only)",
     "cursor_status":"Read cursor position and foreground window (read only)",
     "visual_sequence":"Run a short guarded sequence of desktop input with foreground checks",
@@ -1044,6 +1046,81 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
         for tid in ids:
             if subprocess.run(powershell_args(f"if(Get-Process -Id {tid} -ErrorAction SilentlyContinue){{exit 1}}else{{exit 0}}"),timeout=10).returncode!=0: remaining.append(tid)
         return {"pid":pid,"stopped":not remaining,"child_pid":target.get("child_pid") if target else None,"remaining":remaining}
+    if op=="ui_click":
+        if c.get("confirm") is not True:
+            raise PermissionError("confirm=true required")
+        label=str(c.get("label") or "")
+        if not label or len(label)>120:
+            raise ValueError("exact button label required")
+        hwnd=int(c.get("target_hwnd") or 0)
+        listing=execute({"operation":"ui_accessibility","target_hwnd":hwnd,"limit":100})
+        matches=[e for e in listing["elements"]
+                 if e["kind"]=="ControlType.Button" and e["name"]==label]
+        if len(matches)!=1:
+            raise ValueError("exactly one matching UI Automation button required")
+        box=matches[0]["bounds"]
+        x=(box[0]+box[2])//2
+        y=(box[1]+box[3])//2
+        result=execute({"operation":"mouse_action","action":"click",
+                        "confirm":True,"target_hwnd":hwnd,"x":x,"y":y})
+        return {"clicked":True,"label":label,"center":[x,y],
+                "target_hwnd":hwnd,"performed":result["performed"]}
+    if op=="ui_accessibility":
+        import ctypes
+        from ctypes import wintypes
+        u=ctypes.WinDLL("user32",use_last_error=True)
+        u.GetForegroundWindow.restype=wintypes.HWND
+        hwnd=int(u.GetForegroundWindow() or 0)
+        if not hwnd or int(c.get("target_hwnd") or 0)!=hwnd:
+            raise PermissionError("target window must be foreground")
+        title=ctypes.create_unicode_buffer(512)
+        u.GetWindowTextW(hwnd,title,512)
+        if not title.value:
+            raise PermissionError("untitled foreground window")
+        max_count=max(1,min(100,int(c.get("limit") or 40)))
+        # UI Automation works with WPF/WinForms and many custom controls
+        # without installing an OCR engine or a background service.
+        ps=r"""
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$root=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new(__HWND__))
+if($null -eq $root){throw 'UI Automation root unavailable'}
+$walker=[System.Windows.Automation.TreeWalker]::ControlViewWalker
+$queue=[System.Collections.Generic.Queue[object]]::new()
+$first=$walker.GetFirstChild($root)
+if($first){$queue.Enqueue(@($first,1))}
+$result=[System.Collections.Generic.List[object]]::new()
+while($queue.Count -gt 0 -and $result.Count -lt __LIMIT__){
+    $pair=$queue.Dequeue()
+    $node=$pair[0];$depth=[int]$pair[1]
+    try {
+        $current=$node.Current
+        $kind=[string]$current.ControlType.ProgrammaticName
+        $isPassword=[bool]$current.IsPassword
+        $name=if($isPassword -or $kind -eq 'ControlType.Edit') {''} else {[string]$current.Name}
+        $bounds=$current.BoundingRectangle
+        if($bounds.Width -gt 0 -and $bounds.Height -gt 0 -and -not $current.IsOffscreen){
+            $result.Add(@{kind=$kind;name=$name.Substring(0,[Math]::Min(120,$name.Length));depth=$depth;
+              bounds=@([int]$bounds.Left,[int]$bounds.Top,[int]$bounds.Right,[int]$bounds.Bottom);
+              automation_id=[string]$current.AutomationId;is_password=$isPassword})
+        }
+        if($depth -lt 5){
+            $child=$walker.GetFirstChild($node)
+            if($child){$queue.Enqueue(@($child,$depth+1))}
+        }
+        $next=$walker.GetNextSibling($node)
+        if($next){$queue.Enqueue(@($next,$depth))}
+    }catch{}
+}
+@{elements=@($result.ToArray());count=$result.Count;read_only=$true}|ConvertTo-Json -Depth 6 -Compress
+""".replace("__HWND__",str(hwnd)).replace("__LIMIT__",str(max_count))
+        result=_run_powershell(ps,timeout_seconds=12)
+        if result.returncode:
+            raise RuntimeError("UI Automation failed: "+result.stderr[-500:])
+        data=json.loads(result.stdout.strip())
+        data.update({"target_hwnd":hwnd,"title":title.value,"limit":max_count,
+                     "note":"Accessibility metadata only; editable field contents suppressed"})
+        return data
     if op=="ui_elements":
         import ctypes
         from ctypes import wintypes
