@@ -56,9 +56,9 @@ try {
     New-Item -ItemType Directory -Force -Path $dataRoot,$appRoot | Out-Null
     Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot 'app') | Out-Null
-    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/c31a028555cf91cd0719ba6671f81e7a041dd26d'
+    $rawBase = 'https://raw.githubusercontent.com/nexora-kz/NEXORA-Hands/14f538bb9ee88df3071ffceeb0cdd1203bbd9868'
     $files = @(
-        @{Rel='start.ps1';Sha256='BBB9F09378E752466BDFFA113B4F90E3BF7EEDC23ADDD3C5C0EA616D98C9AFCD'},
+        @{Rel='start.ps1';Sha256='F18448CCDFC80D8D376A4552D0E01E893E87F472A55E62238062C2C6E2EE1B16'},
         @{Rel='stop.ps1';Sha256='64A65E761A41A9DCBBA75706FEA37C4614B944A152B56FF4B6E3F39116733304'},
         @{Rel='self-test.ps1';Sha256='ED43524BDF5CB1BCB7676260B91B9D318CE49A8825E2D253A021D3CB8AC7A742'},
         @{Rel='app/hands.py';Sha256='2EED0C7B2064259E8BB9B4BC13610E1E72E419921822EAACCBDB81C0904C1C76'},
@@ -86,7 +86,7 @@ try {
     }
     try{
         foreach($file in $files){$rel=$file.Rel -replace '/','\'; $src=Join-Path $stageRoot $rel; $dst=Join-Path $runtimeRoot $rel; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst)|Out-Null; Copy-Item -LiteralPath $src -Destination $dst -Force}
-        @{release_sha='c31a028555cf91cd0719ba6671f81e7a041dd26d';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
+        @{release_sha='14f538bb9ee88df3071ffceeb0cdd1203bbd9868';installed_at=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $dataRoot 'release_manifest.json') -Encoding UTF8
     }catch{
         foreach($rel in @('start.ps1','stop.ps1','self-test.ps1','app\hands.py','app\supabase_channel.py','app\hands_supabase_config.json','app\agent_control.py','app\agent_updater.py')){$backup=Join-Path $previousRoot $rel;if(Test-Path -LiteralPath $backup){$dst=Join-Path $runtimeRoot $rel;Copy-Item -LiteralPath $backup -Destination $dst -Force}}
         throw
