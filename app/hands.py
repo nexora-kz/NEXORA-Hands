@@ -1220,13 +1220,17 @@ m['exitcode']=p.returncode; mp.write_text(json.dumps(m,ensure_ascii=False,indent
                     continue
                 diff=ImageChops.difference(needle,small.crop((x,y,x+needle.width,y+needle.height)))
                 if sum(diff.resize((1,1),Image.Resampling.BOX).getpixel((0,0)))/(3*255)<=max(0.12,threshold*4):
-                    for yy in range(max(0,yy-8),min(area.height-patch.height,yy+8)+1):
+                    for yy2 in range(max(0,yy-8),min(area.height-patch.height,yy+8)+1):
                         if second: break
                         for xx2 in range(max(0,xx-8),min(area.width-patch.width,xx+8)+1):
-                            if abs(xx2-final[1])<patch.width and abs(yy-final[2])<patch.height:
+                            if abs(xx2-final[1])<patch.width and abs(yy2-final[2])<patch.height:
                                 continue
-                            exact=ImageChops.difference(patch,area.crop((xx2,yy,xx2+patch.width,yy+patch.height)))
-                            if sum(ImageStat.Stat(exact).mean)/(3*255)<=threshold:
+                            exact=ImageChops.difference(patch,area.crop((xx2,yy2,xx2+patch.width,yy2+patch.height)))
+                            # Fast BOX rejection, with quantization tolerance.
+                            # Every potential second match still receives the
+                            # original full-resolution exact RGB comparison.
+                            quick=sum(exact.resize((1,1),Image.Resampling.BOX).getpixel((0,0)))/(3*255)
+                            if quick<=threshold+1/255 and sum(ImageStat.Stat(exact).mean)/(3*255)<=threshold:
                                 second=True
                                 break
                     if second: break
